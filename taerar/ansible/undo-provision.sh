@@ -171,7 +171,35 @@ main() {
 
   # Reverse formula installations in order, preserving pre-existing packages.
   local package brew_bin formula installed
-  for package in gh ansible; do
+  for package in gh onepassword ansible; do
+    if [[ "$package" == onepassword ]]; then
+      if [[ -f "$state_dir/onepassword-safari-installed" ]]; then
+        local mas_bin installed_apps
+        mas_bin=$(command -v mas || true)
+        if [[ -z "$mas_bin" ]]; then
+          if [[ -x /opt/homebrew/bin/mas ]]; then
+            mas_bin=/opt/homebrew/bin/mas
+          elif [[ -x /usr/local/bin/mas ]]; then
+            mas_bin=/usr/local/bin/mas
+          else
+            echo 'Reinstall mas before undoing the Safari extension installation.' >&2
+            return 1
+          fi
+        fi
+        installed_apps=$("$mas_bin" list)
+        if awk '$1 == "1569813296" { found=1 } END { exit !found }' <<< "$installed_apps"; then
+          "$mas_bin" uninstall 1569813296
+        elif [[ -d '/Applications/1Password for Safari.app' || -d "$HOME/Applications/1Password for Safari.app" ]]; then
+          echo 'Safari app is present but not indexed by mas. Restore Spotlight indexing and rerun undo.' >&2
+          return 1
+        fi
+        rm "$state_dir/onepassword-safari-installed"
+      fi
+      undo_homebrew_manifest "$state_dir" onepassword-casks cask
+      undo_homebrew_manifest "$state_dir" onepassword-formulae formula
+      rm -f "$state_dir/onepassword-formulae.tmp"
+      continue
+    fi
     if [[ -f "$state_dir/$package-formulae" ]]; then
       local formulae=()
       brew_bin=$(command -v brew || true)

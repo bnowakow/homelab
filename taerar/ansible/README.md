@@ -7,13 +7,20 @@ for Linux servers.
 This document records the manual preparation required before running Ansible.
 `provision.sh` currently creates `~/code`, clones this repository if missing, and
 ensures Homebrew and Ansible are installed, then runs local Ansible playbooks
-to install GitHub CLI, log in through the browser, and switch the repository
+to install 1Password for Mac and Safari, install GitHub CLI, log in through the
+browser, and switch the repository
 origin to SSH, and install repository dotfiles into the home directory.
 
 ## Manual steps before running Ansible
 
-The checklist is pending. Add the manual steps here as they are identified, in
-the order they must be completed on a Mac.
+1. Open the Mac App Store and sign in to your Apple Account. This is required
+   for the Safari extension installation; confirm your account is shown in the
+   App Store before running provisioning.
+2. For `--unattended`, run `sudo -v` in the same Terminal first if administrator
+   authorization is not already cached. App Store/Touch ID/password prompts
+   still require you to approve them.
+
+Additional manual prerequisites will be added here as they are identified.
 
 For each step, document:
 
@@ -98,7 +105,8 @@ Provisioning records its changes in `~/.homelab-provision-state`, including
 attempts that may fail partway through. Undo reverses them in order: remove Makefile dependency packages, restore
 dotfiles, restore the original origin URLs, undo the
 GitHub login unless retained, remove GitHub CLI and its new dependencies, remove
-Ansible and its newly installed dependencies, uninstall Homebrew using the
+the newly installed Safari extension, 1Password desktop app and mas dependencies,
+then remove Ansible and its newly installed dependencies, uninstall Homebrew using the
 official uninstaller without confirmation, remove the cloned
 `~/code/homelab` checkout **including any local changes**, then remove `~/code`
 only if empty. Resources that existed before provisioning are preserved. State
@@ -115,8 +123,22 @@ formula, Homebrew may refuse removal; resolve that dependency before retrying.
 
 ## Running Ansible
 
-After bootstrap, `provision.sh` runs `github-cli_playbook.yml` locally, forwarding
-the `--unattended` setting. It installs `gh` using Homebrew and checks
+After bootstrap, `provision.sh` runs `onepassword_playbook.yml` before GitHub
+login. It installs the Homebrew `1password` cask and `mas` if missing, then uses
+`mas get 1569813296` to install [1Password for Safari](https://apps.apple.com/us/app/1password-for-safari/id1569813296?mt=12).
+Existing applications are preserved. The Mac App Store can require Apple Account
+or administrator authentication even with `--unattended`.
+
+After installation, sign in to 1Password for Mac and enable **Safari > Settings >
+Extensions > 1Password for Safari**, approving website permissions as needed.
+These account/OS steps are manual; provisioning prints the instructions but does
+not wait for their completion. Undo removes only applications/tools installed
+by provisioning. It does not use Homebrew `--zap` or delete vault data, app
+preferences, or Apple Account purchase history. `--keep-gh-login` retains only
+GitHub authentication, not the 1Password apps.
+
+It then runs `github-cli_playbook.yml` locally, forwarding the `--unattended`
+setting. It installs `gh` using Homebrew and checks
 `gh auth status --hostname github.com`. If no login exists, it runs
 `gh auth login --hostname github.com --web --git-protocol https --skip-ssh-key`.
 The device code and browser instructions appear directly in Terminal; browser

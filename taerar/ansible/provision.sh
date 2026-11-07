@@ -123,6 +123,9 @@ if [[ -z "$terminal_name" || "$terminal_name" == '??' || ! -c "$provision_tty" ]
 fi
 export HOMELAB_PROVISION_TTY="$provision_tty"
 ansible-playbook -i localhost, -c local \
+  "$repo_dir/taerar/ansible/onepassword_playbook.yml" \
+  --extra-vars "{\"provision_unattended\": $unattended}"
+ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/github-cli_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
 ansible-playbook -i localhost, -c local \
