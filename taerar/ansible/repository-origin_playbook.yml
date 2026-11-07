@@ -7,6 +7,19 @@
     repo_dir: "{{ lookup('env', 'HOME') }}/code/homelab"
     state_dir: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
   tasks:
+    - name: Verify SSH repository access before changing origin
+      ansible.builtin.shell: |
+        if ! git ls-remote git@github.com:bnowakow/homelab.git HEAD >/dev/null; then
+          echo 'GitHub SSH access is not ready. Enable/unlock the 1Password SSH agent, configure IdentityAgent in ~/.ssh/config, and register the public key on GitHub. For an unknown host key, verify GitHub host authenticity with ssh -T git@github.com in Terminal, then rerun provisioning.' >&2
+          exit 1
+        fi
+      args:
+        chdir: "{{ repo_dir }}"
+      environment:
+        GIT_TERMINAL_PROMPT: '0'
+        GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o ConnectTimeout=15'
+      changed_when: false
+
     - name: Record original origin URLs and switch to SSH
       ansible.builtin.shell: |
         set -euo pipefail

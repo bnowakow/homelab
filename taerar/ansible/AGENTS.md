@@ -35,6 +35,11 @@
   1password=preferences explicitly selects app removal with data retained.
 - Open 1Password after installation, recording whether provisioning launched it.
   Only quit a provisioning-opened app during undo, unless the app is retained.
+- After opening 1Password, first show a sign-in confirmation dialog. Only after
+  confirmation show SSH agent setup instructions, then verify the agent offers
+  a key. Verify GitHub SSH repository access before changing origin. These are
+  read-only checks/manual app preferences; do not generate/export private keys,
+  disable host verification or change app settings before sign-in confirmation.
 - Install dialog early through Ansible. Always show the 1Password readiness
   checkpoint before GitHub installation, including with --unattended; this is an
   explicit exception to automatic installation confirmations. No/Escape stops.

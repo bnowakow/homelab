@@ -161,10 +161,14 @@ or administrator authentication even with `--unattended`.
 
 After installation, sign in to 1Password for Mac and enable **Safari > Settings >
 Extensions > 1Password for Safari**, approving website permissions as needed.
-Provisioning opens 1Password and asks through dialog whether setup is complete
-before installing GitHub CLI. Continue proceeds; Stop or Escape aborts. This
-manual readiness checkpoint also appears with `--unattended`; installation
-confirmations still progress automatically. Undo removes only applications/tools installed
+Provisioning opens 1Password and first asks through dialog whether you have
+signed in and unlocked it. Only after confirmation does a second dialog ask you
+to enable **1Password > Settings > Developer > Use the SSH Agent**, make your SSH
+key available, register its public key on GitHub, configure SSH to use the agent,
+and enable the Safari extension. It then checks the 1Password agent with
+`ssh-add -l` using its socket. If unavailable or empty, provisioning stops with
+instructions. Both checkpoints appear with `--unattended`; Stop/Escape aborts.
+No app settings are changed before the sign-in confirmation. Undo removes only applications/tools installed
 by provisioning. It does not use Homebrew `--zap` or delete vault data, app
 preferences, or Apple Account purchase history. `--keep` with `"gh":"preferences"` retains
 GitHub authentication; include `"1password":"app"` to retain both apps.
@@ -180,7 +184,14 @@ It then runs `repository-origin_playbook.yml` to switch `origin` fetch and any
 explicit push URLs to `git@github.com:bnowakow/homelab.git`. The original URLs
 are saved once and restored by undo, including when `--keep` retains GitHub preferences. Other
 remote settings are preserved. This step does not create or upload SSH keys;
-SSH access requires a key configured on GitHub.
+Before changing origin, a read-only `git ls-remote` verifies repository access
+over SSH with strict host verification. Authentication failure leaves origin
+unchanged. If GitHub is not yet a trusted SSH host, verify its host key by running
+`ssh -T git@github.com` in Terminal, then rerun provisioning. A valid key must be
+registered on GitHub and SSH must be configured to use the agent, as described
+in [1Password SSH setup](https://www.1password.dev/ssh/get-started).
+These checks make no persistent changes; manually enabled agent settings remain
+in 1Password preferences and are preserved by undo.
 
 Finally, `dotfiles_playbook.yml` runs `make install-dotfiles` from `~/code/homelab`.
 It uses the existing shared file list and hostname-specific `.screenrc` mapping.

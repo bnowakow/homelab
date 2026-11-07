@@ -11,8 +11,8 @@ confirmations such as `Do you want to proceed with the installation? [y/n]`.
 Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
 existing sudo authorization for unattended installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
-The 1Password readiness dialog waits for confirmation before GitHub setup, even
-with `--unattended`. Undo offers a commit/ignore/exit dialog for uncommitted work.
+The 1Password dialogs confirm sign-in first, then SSH agent setup, even with
+`--unattended`. The agent and GitHub SSH access are checked before switching origin. Undo offers a commit/ignore/exit dialog for uncommitted work.
 
 It runs the provisioning script from `master`, creates `~/code` if needed,
 clones this repository into `~/code/homelab` over HTTPS if missing, and installs
