@@ -22,6 +22,10 @@
   start unrelated account logins as part of installing their dependencies.
 - Whenever `provision.sh` gains or changes a persistent action, update
   `undo-provision.sh` in the same change to reverse it in the opposite order.
+- Run `dotfiles_playbook.yml` immediately after 1Password setup and before
+  GitHub CLI installation/login. Both stages can change ~/.gitconfig: preserve
+  its pre-dotfiles baseline in the GitHub snapshot and handle older rollback
+  snapshots without restoring a later copy over the original file.
 - Use `undo-provision.sh --keep JSON` for retention. Supported entries:
   `"gh":"preferences"`; `"1password":"app"` or `"preferences"`. Validate JSON
   before mutations, rejecting malformed input, duplicate keys, unknown keys and

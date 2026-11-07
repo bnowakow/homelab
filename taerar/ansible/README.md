@@ -7,9 +7,8 @@ for Linux servers.
 This document records the manual preparation required before running Ansible.
 `provision.sh` currently creates `~/code`, clones this repository if missing, and
 ensures Homebrew and Ansible are installed, then runs local Ansible playbooks
-to install 1Password for Mac and Safari, install GitHub CLI, log in through the
-browser, and switch the repository
-origin to SSH, and install repository dotfiles into the home directory.
+to install 1Password for Mac and Safari, apply dotfiles, install GitHub CLI,
+log in through the browser, and switch the repository origin to SSH.
 
 ## Manual steps before running Ansible
 
@@ -131,8 +130,8 @@ Or download and run the version from `master`:
 
 Provisioning records its changes in `~/.homelab-provision-state`, including
 attempts that may fail partway through. Undo reverses them in order: remove Makefile dependency packages, restore
-dotfiles, restore the original origin URLs, undo the
-GitHub login unless retained, remove GitHub CLI and its new dependencies, remove
+the original origin URLs, undo the GitHub login unless retained, restore
+dotfiles, remove GitHub CLI and its new dependencies, remove
 the newly installed Safari extension, 1Password desktop app and mas dependencies,
 remove early dialog dependencies, then remove Ansible and its newly installed dependencies, uninstall Homebrew using the
 official uninstaller without confirmation, remove the cloned
@@ -175,6 +174,19 @@ by provisioning. It does not use Homebrew `--zap` or delete vault data, app
 preferences, or Apple Account purchase history. `--keep` with `"gh":"preferences"` retains
 GitHub authentication; include `"1password":"app"` to retain both apps.
 
+Next, `dotfiles_playbook.yml` runs `make install-dotfiles` from `~/code/homelab`.
+It uses the existing shared file list and hostname-specific `.screenrc` mapping.
+During provisioning, changed dotfiles are snapshotted under
+`~/.homelab-provision-state/dotfiles` before replacement. Undo restores original
+files (including symlinks and permissions) and removes files that were originally
+absent. Repeated runs keep the original snapshots. As with other test rollback,
+changes you make to installed dotfiles afterward are replaced by undo.
+GitHub rollback also preserves the pre-dotfiles `.gitconfig` baseline so keeping
+GitHub preferences through one undo does not reinstall dotfiles on a later full
+undo. Older snapshots are handled when restoring this shared file.
+Standalone `make install-dotfiles` retains its usual `~/.homelab-dotfiles-backup.*`
+backups and does not participate in provisioning rollback.
+
 It then runs `github-cli_playbook.yml` locally, forwarding the `--unattended`
 setting. It installs `gh` using Homebrew and checks
 `gh auth status --hostname github.com`. If no login exists, it runs
@@ -203,16 +215,6 @@ configure the source file if needed. Manually enabled agent settings remain in
 arbitrary direct settings-file edits. Enabling its SSH agent and approving Safari
 extension permissions remain interactive UI steps; the playbook does not change
 those settings using private file formats.
-
-Finally, `dotfiles_playbook.yml` runs `make install-dotfiles` from `~/code/homelab`.
-It uses the existing shared file list and hostname-specific `.screenrc` mapping.
-During provisioning, changed dotfiles are snapshotted under
-`~/.homelab-provision-state/dotfiles` before replacement. Undo restores original
-files (including symlinks and permissions) and removes files that were originally
-absent. Repeated runs keep the original snapshots. As with other test rollback,
-changes you make to installed dotfiles afterward are replaced by undo.
-Standalone `make install-dotfiles` retains its usual `~/.homelab-dotfiles-backup.*`
-backups and does not participate in provisioning rollback.
 
 Finally, `make-dependencies_playbook.yml` installs missing runtime tools used by
 the root Makefile targets. It preserves tools already installed through Homebrew
