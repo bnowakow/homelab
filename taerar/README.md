@@ -11,14 +11,16 @@ confirmations such as `Do you want to proceed with the installation? [y/n]`.
 Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
 existing sudo authorization for unattended installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
+The 1Password readiness dialog waits for confirmation before GitHub setup, even
+with `--unattended`. Undo offers a commit/ignore/exit dialog for uncommitted work.
 
 It runs the provisioning script from `master`, creates `~/code` if needed,
 clones this repository into `~/code/homelab` over HTTPS if missing, and installs
 Homebrew and Ansible if needed, then uses Ansible to install 1Password for Mac and
 1Password for Safari before installing GitHub CLI and opening browser login, then switch the repository origin to SSH and run `make install-dotfiles` to copy
 dotfiles into `~/`, then install missing tools used by the root Makefile targets.
-Use `undo-provision.sh --keep-gh-login` to retain
-authentication between test runs. See [the provisioning documentation](ansible/README.md) for
+Use `undo-provision.sh --keep '{"gh":"preferences","1password":"app"}'` to retain
+GitHub authentication and 1Password apps between test runs. See [the provisioning documentation](ansible/README.md) for
 details and manual prerequisites.
 
 # IndexNow URL submission

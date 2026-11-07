@@ -34,14 +34,63 @@ undo_homebrew_manifest() {
 }
 
 main() {
-  local keep_gh_login=false argument
-  for argument in "$@"; do
-    case "$argument" in
-      --keep-gh-login) keep_gh_login=true ;;
-      --help|-h) echo "Usage: $0 [--keep-gh-login]"; return 0 ;;
-      *) echo "Usage: $0 [--keep-gh-login]" >&2; return 2 ;;
+  local keep_gh_preferences=false keep_onepassword=false
+  local keep_json= keep_supplied=false keep_modes
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --keep)
+        if [[ $# -lt 2 || "$keep_supplied" == true ]]; then
+          echo '--keep requires one JSON object and may only be specified once.' >&2
+          return 2
+        fi
+        keep_json=$2
+        keep_supplied=true
+        shift 2
+        ;;
+      --help|-h)
+        echo "Usage: $0 [--keep JSON]"
+        echo 'Supported: gh=preferences; 1password=preferences or app.'
+        return 0
+        ;;
+      *) echo "Usage: $0 [--keep JSON]" >&2; return 2 ;;
     esac
   done
+  if [[ "$keep_supplied" == true ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+      echo 'Python 3 is required to parse --keep JSON.' >&2
+      return 2
+    fi
+    if ! keep_modes=$(python3 - "$keep_json" <<'PY'
+import json
+import sys
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key: " + key)
+        result[key] = value
+    return result
+
+try:
+    keep = json.loads(sys.argv[1], object_pairs_hook=unique_object)
+    allowed = {"gh": ("preferences",), "1password": ("preferences", "app")}
+    if not isinstance(keep, dict):
+        raise ValueError("expected a JSON object")
+    for key, value in keep.items():
+        if key not in allowed or value not in allowed[key]:
+            raise ValueError("supported entries: gh=preferences; 1password=preferences or app")
+    print(str(keep.get("gh") == "preferences").lower(),
+          str(keep.get("1password") == "app").lower())
+except (ValueError, TypeError) as error:
+    print("Invalid --keep JSON: " + str(error), file=sys.stderr)
+    sys.exit(2)
+PY
+    ); then
+      return 2
+    fi
+    read -r keep_gh_preferences keep_onepassword <<< "$keep_modes"
+  fi
   if [[ $(uname -s) != Darwin ]]; then
     echo 'This script requires macOS.' >&2
     return 1
@@ -57,6 +106,61 @@ main() {
   if [[ ! -d "$state_dir" ]]; then
     echo 'No recorded provisioning changes to undo. Earlier untracked runs cannot be undone automatically.'
     return 0
+  fi
+
+  # This is a manual data-loss checkpoint, before any rollback mutations.
+  if [[ -e "$repo_dir/.git" ]]; then
+    local checkout_changes dialog_bin terminal_name undo_tty choice
+    while true; do
+      checkout_changes=$(git -C "$repo_dir" status --porcelain --untracked-files=all)
+      [[ -n "$checkout_changes" ]] || break
+      dialog_bin=$(command -v dialog || true)
+      if [[ -z "$dialog_bin" ]]; then
+        for dialog_bin in /opt/homebrew/bin/dialog /usr/local/bin/dialog; do
+          [[ ! -x "$dialog_bin" ]] || break
+        done
+      fi
+      if [[ ! -x "$dialog_bin" ]]; then
+        echo 'Undo stopped: uncommitted changes exist and dialog is unavailable. Install dialog or commit/back up your work first.' >&2
+        return 1
+      fi
+      terminal_name=$(ps -p $$ -o tty=)
+      terminal_name=${terminal_name//[[:space:]]/}
+      undo_tty="/dev/${terminal_name#/dev/}"
+      if [[ -z "$terminal_name" || "$terminal_name" == '??' || ! -c "$undo_tty" ]]; then
+        echo 'Undo stopped: run from an interactive Terminal to review uncommitted changes.' >&2
+        return 1
+      fi
+      if ! choice=$(TERM="${TERM:-xterm-256color}" "$dialog_bin" --clear --stdout \
+        --title 'Uncommitted homelab changes' --default-item exit \
+        --menu 'The checkout has uncommitted or untracked files. Undo may delete this checkout. Choose what to do before any rollback begins.' \
+        18 80 3 \
+        commit 'Stage ALL changes and run make codex-commit, then recheck' \
+        ignore 'Ignore local changes and proceed with undo (may delete them)' \
+        exit 'Exit without undoing anything' < "$undo_tty" 2> "$undo_tty"); then
+        echo 'Undo cancelled; no rollback actions were run.'
+        return 0
+      fi
+      case "$choice" in
+        commit)
+          (cd "$repo_dir" && git add -A && make codex-commit) < "$undo_tty" > "$undo_tty" 2>&1
+          ;;
+        ignore) break ;;
+        exit) echo 'Undo cancelled; no rollback actions were run.'; return 0 ;;
+        *) echo 'Undo stopped: invalid dialog selection.' >&2; return 1 ;;
+      esac
+    done
+  fi
+
+  local retaining_onepassword=false
+  if [[ "$keep_onepassword" == true && (
+    -f "$state_dir/onepassword-casks" ||
+    -f "$state_dir/onepassword-formulae" ||
+    -f "$state_dir/onepassword-formulae.tmp" ||
+    -f "$state_dir/onepassword-safari-installed" ||
+    -f "$state_dir/onepassword-opened"
+  ) ]]; then
+    retaining_onepassword=true
   fi
 
   # This stage was installed last. Remove casks before their formula dependencies.
@@ -119,8 +223,8 @@ main() {
   done
 
   # Undo browser login while gh is still installed. Credentials remain in the
-  # macOS keychain/config directory when --keep-gh-login is selected.
-  if [[ -d "$state_dir/gh-login" && "$keep_gh_login" == false ]]; then
+  # macOS keychain/config directory when gh=preferences is selected in --keep.
+  if [[ -d "$state_dir/gh-login" && "$keep_gh_preferences" == false ]]; then
     local gh_config_dir
     IFS= read -r gh_config_dir < "$state_dir/gh-login/config-path"
     if [[ -z "$gh_config_dir" || "$gh_config_dir" == / || "$gh_config_dir" == "$HOME" ]]; then
@@ -171,8 +275,15 @@ main() {
 
   # Reverse formula installations in order, preserving pre-existing packages.
   local package brew_bin formula installed
-  for package in gh onepassword ansible; do
+  for package in gh onepassword terminal-ui ansible; do
     if [[ "$package" == onepassword ]]; then
+      if [[ "$keep_onepassword" == true ]]; then continue; fi
+      if [[ -f "$state_dir/onepassword-opened" ]]; then
+        if pgrep -x -u "$(id -u)" 1Password >/dev/null; then
+          osascript -e 'tell application "1Password" to quit'
+        fi
+        rm "$state_dir/onepassword-opened"
+      fi
       if [[ -f "$state_dir/onepassword-safari-installed" ]]; then
         local mas_bin installed_apps
         mas_bin=$(command -v mas || true)
@@ -198,6 +309,11 @@ main() {
       undo_homebrew_manifest "$state_dir" onepassword-casks cask
       undo_homebrew_manifest "$state_dir" onepassword-formulae formula
       rm -f "$state_dir/onepassword-formulae.tmp"
+      continue
+    fi
+    if [[ "$package" == terminal-ui ]]; then
+      undo_homebrew_manifest "$state_dir" terminal-ui-formulae formula
+      rm -f "$state_dir/terminal-ui-formulae.tmp"
       continue
     fi
     if [[ -f "$state_dir/$package-formulae" ]]; then
@@ -230,10 +346,14 @@ main() {
   done
 
   if [[ -f "$state_dir/homebrew-installed" ]]; then
+    if [[ "$retaining_onepassword" == true ]]; then
+      echo 'Keeping Homebrew and its rollback marker so retained 1Password packages remain managed.'
+    else
     echo 'Uninstalling Homebrew installed by provisioning...'
     uninstaller=$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)
     NONINTERACTIVE=1 /bin/bash -c "$uninstaller"
     rm "$state_dir/homebrew-installed"
+    fi
   fi
 
   if [[ -f "$state_dir/repo-created" ]]; then
@@ -255,9 +375,13 @@ main() {
     rm "$state_dir/code-created"
   fi
 
-  if [[ "$keep_gh_login" == true && -d "$state_dir/gh-login" ]]; then
+  if [[ "$keep_gh_preferences" == true && -d "$state_dir/gh-login" ]]; then
     echo 'GitHub login retained. Its rollback snapshot is kept for a later full undo.'
-  else
+  fi
+  if [[ "$retaining_onepassword" == true ]]; then
+    echo '1Password apps, mas and their rollback records retained for a later full undo.'
+  fi
+  if [[ "$retaining_onepassword" == false && !( "$keep_gh_preferences" == true && -d "$state_dir/gh-login" ) ]]; then
     rmdir "$state_dir"
   fi
   echo 'Recorded provisioning changes have been undone.'

@@ -74,20 +74,48 @@ or additional Python installation is required for these playbooks.
 
 ## Undoing provisioning during testing
 
-To keep the GitHub login between development runs:
+Use a JSON object with `--keep` to select what survives undo:
 
 ```sh
-./taerar/ansible/undo-provision.sh --keep-gh-login
+./taerar/ansible/undo-provision.sh --keep '{"gh":"preferences","1password":"app"}'
 ```
 
-This retains the credentials in GitHub CLI's configuration/macOS keychain and
-the original configuration snapshot in `~/.homelab-provision-state/gh-login`.
-GitHub CLI itself can still be uninstalled. Provision again to reinstall it and
-reuse the login. For the final full test, run undo without `--keep-gh-login`
-while `gh` is installed; this logs out the provisioning-created account and
-restores the original GitHub CLI and global Git configuration (interactive login
-can configure Git's credential helper). Pre-existing valid logins are preserved.
-Configuration changes made after the snapshot will be replaced during full undo.
+| Entry | Behavior |
+| --- | --- |
+| `"gh":"preferences"` | Retain GitHub authentication/configuration and its rollback snapshot; remove gh if provisioning installed it. |
+| `"1password":"app"` | Retain both 1Password apps, preferences/vault data, mas, rollback records, and provisioning-installed Homebrew so the cask stays managed. |
+| `"1password":"preferences"` | Remove provisioning-installed apps while preserving preferences and vault data (also the default 1Password behavior). |
+
+To remove both applications but retain their account information:
+
+```sh
+./taerar/ansible/undo-provision.sh --keep '{"gh":"preferences","1password":"preferences"}'
+```
+
+Omitted entries use normal undo behavior. An empty object is equivalent to
+omitting `--keep`. Malformed JSON, duplicate keys, unknown keys and unsupported
+values are rejected before undo begins. Python 3 parses JSON before any packages
+are removed; it is supplied by Command Line Tools or Homebrew.
+
+Rerun provisioning to reinstall removed tools and reuse retained credentials.
+For a full test, omit `--keep` while gh is installed. Undo removes only the
+provisioning-created login and restores the original GitHub CLI/global Git
+configuration; changes after that snapshot are replaced. Pre-existing valid
+logins are preserved. 1Password preferences and vault data are always preserved.
+Undo quits 1Password only if provisioning opened it, unless the app is retained.
+
+Before any rollback, undo checks `~/code/homelab` for staged, unstaged and
+untracked files. If found, a dialog offers:
+
+- **Commit:** stage all changes with `git add -A`, run `make codex-commit`, then
+  recheck. Its normal commit/push prompts remain interactive.
+- **Ignore:** continue undo, accepting that local changes may be deleted.
+- **Exit:** stop without rollback. Escape also exits; Exit is the default choice.
+
+If the commit command fails, undo stops. If it leaves changes, the dialog appears
+again. When dialog or an interactive terminal is unavailable, undo stops safely.
+Commit and push work you want to preserve before deleting a provisioning-created
+checkout; making a local commit alone does not preserve it outside that checkout.
 
 Run as your normal user, without `sudo`:
 
@@ -106,7 +134,7 @@ attempts that may fail partway through. Undo reverses them in order: remove Make
 dotfiles, restore the original origin URLs, undo the
 GitHub login unless retained, remove GitHub CLI and its new dependencies, remove
 the newly installed Safari extension, 1Password desktop app and mas dependencies,
-then remove Ansible and its newly installed dependencies, uninstall Homebrew using the
+remove early dialog dependencies, then remove Ansible and its newly installed dependencies, uninstall Homebrew using the
 official uninstaller without confirmation, remove the cloned
 `~/code/homelab` checkout **including any local changes**, then remove `~/code`
 only if empty. Resources that existed before provisioning are preserved. State
@@ -123,7 +151,9 @@ formula, Homebrew may refuse removal; resolve that dependency before retrying.
 
 ## Running Ansible
 
-After bootstrap, `provision.sh` runs `onepassword_playbook.yml` before GitHub
+After bootstrap, `terminal-ui_playbook.yml` installs `dialog` and records its
+new dependencies for undo. Other Makefile dependencies still run later.
+Then `provision.sh` runs `onepassword_playbook.yml` before GitHub
 login. It installs the Homebrew `1password` cask and `mas` if missing, then uses
 `mas get 1569813296` to install [1Password for Safari](https://apps.apple.com/us/app/1password-for-safari/id1569813296?mt=12).
 Existing applications are preserved. The Mac App Store can require Apple Account
@@ -131,11 +161,13 @@ or administrator authentication even with `--unattended`.
 
 After installation, sign in to 1Password for Mac and enable **Safari > Settings >
 Extensions > 1Password for Safari**, approving website permissions as needed.
-These account/OS steps are manual; provisioning prints the instructions but does
-not wait for their completion. Undo removes only applications/tools installed
+Provisioning opens 1Password and asks through dialog whether setup is complete
+before installing GitHub CLI. Continue proceeds; Stop or Escape aborts. This
+manual readiness checkpoint also appears with `--unattended`; installation
+confirmations still progress automatically. Undo removes only applications/tools installed
 by provisioning. It does not use Homebrew `--zap` or delete vault data, app
-preferences, or Apple Account purchase history. `--keep-gh-login` retains only
-GitHub authentication, not the 1Password apps.
+preferences, or Apple Account purchase history. `--keep` with `"gh":"preferences"` retains
+GitHub authentication; include `"1password":"app"` to retain both apps.
 
 It then runs `github-cli_playbook.yml` locally, forwarding the `--unattended`
 setting. It installs `gh` using Homebrew and checks
@@ -146,7 +178,7 @@ authorization still requires your participation with `--unattended`. Existing
 credentials that fail validation stop provisioning rather than being overwritten.
 It then runs `repository-origin_playbook.yml` to switch `origin` fetch and any
 explicit push URLs to `git@github.com:bnowakow/homelab.git`. The original URLs
-are saved once and restored by undo, including with `--keep-gh-login`. Other
+are saved once and restored by undo, including when `--keep` retains GitHub preferences. Other
 remote settings are preserved. This step does not create or upload SSH keys;
 SSH access requires a key configured on GitHub.
 

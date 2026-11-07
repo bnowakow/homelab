@@ -1,0 +1,38 @@
+- name: Install the terminal UI before interactive setup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Install dialog when missing and record rollback dependencies
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        if command -v dialog >/dev/null 2>&1; then
+          echo already-installed
+          exit 0
+        fi
+        if [[ "$UNATTENDED" != true ]]; then unset HOMEBREW_NO_ASK; fi
+        dependencies=$(brew deps --missing --formula dialog)
+        installed=$(brew list --formula)
+        {
+          if [[ -f "$STATE_DIR/terminal-ui-formulae" ]]; then cat "$STATE_DIR/terminal-ui-formulae"; fi
+          if [[ $'\n'"$installed"$'\n' != *$'\ndialog\n'* ]]; then echo dialog; fi
+          printf '%s\n' "$dependencies"
+        } | sed '/^$/d' | sort -u > "$STATE_DIR/terminal-ui-formulae.tmp"
+        mv "$STATE_DIR/terminal-ui-formulae.tmp" "$STATE_DIR/terminal-ui-formulae"
+        brew install --formula dialog < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+      args:
+        executable: /bin/bash
+      environment:
+        STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
+        UNATTENDED: "{{ provision_unattended | bool | lower }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | bool else '' }}"
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+      register: terminal_ui_install
+      changed_when: "'already-installed' not in terminal_ui_install.stdout"

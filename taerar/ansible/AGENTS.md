@@ -22,11 +22,26 @@
   start unrelated account logins as part of installing their dependencies.
 - Whenever `provision.sh` gains or changes a persistent action, update
   `undo-provision.sh` in the same change to reverse it in the opposite order.
-- Keep `undo-provision.sh --keep-gh-login` usable for repeated development tests:
-  retain GitHub CLI credentials and their rollback snapshot, even when removing
-  gh/Homebrew. A later normal provisioning run must reuse the login, and a full
-  undo without the switch must remove only the login created by provisioning.
-  Never print or copy tokens into logs, playbook output, or the repository.
+- Use `undo-provision.sh --keep JSON` for retention. Supported entries:
+  `"gh":"preferences"`; `"1password":"app"` or `"preferences"`. Validate JSON
+  before mutations, rejecting malformed input, duplicate keys, unknown keys and
+  unsupported values. Never evaluate JSON as shell code.
+- gh=preferences retains credentials and their rollback snapshot while allowing
+  gh/Homebrew removal. Reprovisioning must reuse the login; full undo removes
+  only the provisioning-created login. Never log or copy tokens into the repo.
+- 1password=app retains both apps, preferences, mas, rollback records and
+  provisioning-installed Homebrew so the cask remains managed. Full undo must
+  still remove tracked installs later. Always preserve preferences/vault data;
+  1password=preferences explicitly selects app removal with data retained.
+- Open 1Password after installation, recording whether provisioning launched it.
+  Only quit a provisioning-opened app during undo, unless the app is retained.
+- Install dialog early through Ansible. Always show the 1Password readiness
+  checkpoint before GitHub installation, including with --unattended; this is an
+  explicit exception to automatic installation confirmations. No/Escape stops.
+- Before any rollback, check the checkout for staged, unstaged and untracked
+  files. If dirty, show a dialog offering stage-all + make codex-commit (then
+  recheck), ignore and proceed, or exit without rollback. Default to Exit; treat
+  cancellation as Exit. If dialog/terminal is unavailable or commit fails, stop.
 - Record changes in `~/.homelab-provision-state` outside the checkout. Track only
   resources created or modified by provisioning; preserve pre-existing resources.
   Record intent before operations that can partially fail and keep markers until
