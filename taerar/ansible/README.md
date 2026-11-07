@@ -95,7 +95,8 @@ Or download and run the version from `master`:
 ```
 
 Provisioning records its changes in `~/.homelab-provision-state`, including
-attempts that may fail partway through. Undo reverses them in order: restore dotfiles, restore the original origin URLs, undo the
+attempts that may fail partway through. Undo reverses them in order: remove Makefile dependency packages, restore
+dotfiles, restore the original origin URLs, undo the
 GitHub login unless retained, remove GitHub CLI and its new dependencies, remove
 Ansible and its newly installed dependencies, uninstall Homebrew using the
 official uninstaller without confirmation, remove the cloned
@@ -136,3 +137,26 @@ absent. Repeated runs keep the original snapshots. As with other test rollback,
 changes you make to installed dotfiles afterward are replaced by undo.
 Standalone `make install-dotfiles` retains its usual `~/.homelab-dotfiles-backup.*`
 backups and does not participate in provisioning rollback.
+
+Finally, `make-dependencies_playbook.yml` installs missing runtime tools used by
+the root Makefile targets. It preserves tools already installed through Homebrew
+or available through another supported installation path.
+
+| Make target | Dependencies |
+| --- | --- |
+| `help`, `install-dotfiles` | macOS/Command Line Tools: make, shell and standard utilities |
+| `install-git-hooks` | Git and Homebrew `ggshield` (so the pipx/pip installation fallback is unnecessary) |
+| `codex-commit`, `claude-commit` | Codex CLI and Claude Code casks; `dialog` for the terminal UI; system `infocmp` and `clear` |
+| `sync-dotfiles` | Git, standard utilities and `dialog` (the alternative whiptail UI is unnecessary) |
+| `cron-install-rancher` and its cron script | Homebrew Bash (for `mapfile`), `kubernetes-cli`, `jq`, `flock`, `logrotate`; system sudo/crontab |
+
+The Rancher cron target still requires a Linux server layout (`/etc/logrotate.d`,
+`/etc/rancher/k3s/k3s.yaml` and its fixed Linux PATH). Installing tools on a Mac
+does not make that target portable or configure cluster access. Provisioning does
+not run the Makefile targets other than `install-dotfiles`, install cron jobs,
+enable hooks, or authenticate ggshield/Codex/Claude. Complete those account logins
+before using their targets.
+
+New formulae, their missing dependencies, and new casks are recorded before
+installation. Undo removes those packages before restoring dotfiles and origin,
+preserving packages that existed beforehand. Package upgrades are not rolled back.

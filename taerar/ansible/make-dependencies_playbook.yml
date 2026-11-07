@@ -1,0 +1,106 @@
+- name: Install dependencies of the root Makefile targets
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Install missing Makefile tools and record rollback manifests
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        if [[ "$UNATTENDED" != true ]]; then
+          unset HOMEBREW_NO_ASK
+        fi
+        # Basic utilities and make come from macOS/Command Line Tools.
+        for tool in make git awk sed grep cp mv chmod mktemp hostname infocmp clear; do
+          command -v "$tool" >/dev/null
+        done
+        installed_formulae=$(brew list --formula)
+        installed_casks=$(brew list --cask)
+        formulae=()
+        casks=()
+        add_formula() {
+          local formula=$1 command=$2
+          if [[ $'\n'"$installed_formulae"$'\n' == *$'\n'"$formula"$'\n'* ]]; then
+            return
+          fi
+          # Homebrew Bash is required for mapfile in the Rancher script.
+          if [[ "$formula" != bash ]] && command -v "$command" >/dev/null 2>&1; then
+            return
+          fi
+          formulae+=("$formula")
+        }
+        add_formula bash bash
+        add_formula ggshield ggshield
+        add_formula dialog dialog
+        add_formula kubernetes-cli kubectl
+        add_formula jq jq
+        add_formula flock flock
+        add_formula logrotate logrotate
+
+        have_codex=false
+        if command -v codex >/dev/null 2>&1 || [[ -n "${CODEX_BIN:-}" && -x "$CODEX_BIN" ]]; then
+          have_codex=true
+        fi
+        for app in /Applications/Codex.app /Applications/ChatGPT.app "$HOME/Applications/Codex.app" "$HOME/Applications/ChatGPT.app"; do
+          for binary in Contents/Resources/codex Contents/Resources/codex-cli/bin/codex Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex; do
+            if [[ -x "$app/$binary" ]]; then have_codex=true; fi
+          done
+        done
+        if [[ "$have_codex" == false && $'\n'"$installed_casks"$'\n' != *$'\ncodex\n'* ]]; then
+          casks+=(codex)
+        fi
+        have_claude=false
+        for binary in "${CLAUDE_BIN:-}" "$HOME/.local/bin/claude" "$HOME/.claude/local/claude"; do
+          if [[ -n "$binary" && -x "$binary" ]]; then have_claude=true; fi
+        done
+        if command -v claude >/dev/null 2>&1; then have_claude=true; fi
+        if [[ "$have_claude" == false && $'\n'"$installed_casks"$'\n' != *$'\nclaude-code\n'* ]]; then
+          casks+=(claude-code)
+        fi
+
+        # Compute missing dependencies before either install, including cask deps.
+        # Merge intent with earlier runs so interrupted installs remain reversible.
+        pending_formulae=
+        if [[ -n "${formulae[*]-}" ]]; then
+          dependencies=$(brew deps --missing --formula "${formulae[@]}")
+          pending_formulae=$(printf '%s\n' "${formulae[@]}" "$dependencies")
+        fi
+        if [[ -n "${casks[*]-}" ]]; then
+          dependencies=$(brew deps --missing --cask "${casks[@]}")
+          pending_formulae=$(printf '%s\n' "$pending_formulae" "$dependencies")
+          {
+            if [[ -f "$STATE_DIR/make-dependencies-casks" ]]; then cat "$STATE_DIR/make-dependencies-casks"; fi
+            printf '%s\n' "${casks[@]}"
+          } | sort -u > "$STATE_DIR/make-dependencies-casks.tmp"
+          mv "$STATE_DIR/make-dependencies-casks.tmp" "$STATE_DIR/make-dependencies-casks"
+        fi
+        if [[ -n "$pending_formulae" ]]; then
+          {
+            if [[ -f "$STATE_DIR/make-dependencies-formulae" ]]; then cat "$STATE_DIR/make-dependencies-formulae"; fi
+            printf '%s\n' "$pending_formulae"
+          } | sed '/^$/d' | sort -u > "$STATE_DIR/make-dependencies-formulae.tmp"
+          mv "$STATE_DIR/make-dependencies-formulae.tmp" "$STATE_DIR/make-dependencies-formulae"
+        fi
+        if [[ -n "${formulae[*]-}" ]]; then
+          brew install --formula "${formulae[@]}" < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+          echo installed-formulae
+        fi
+        if [[ -n "${casks[*]-}" ]]; then
+          brew install --cask "${casks[@]}" < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+          echo installed-casks
+        fi
+      args:
+        executable: /bin/bash
+      environment:
+        STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
+        UNATTENDED: "{{ provision_unattended | bool | lower }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | bool else '' }}"
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+      register: make_dependencies
+      changed_when: "'installed-' in make_dependencies.stdout"

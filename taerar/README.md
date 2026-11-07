@@ -16,7 +16,8 @@ It runs the provisioning script from `master`, creates `~/code` if needed,
 clones this repository into `~/code/homelab` over HTTPS if missing, and installs
 Homebrew and Ansible if needed, then uses Ansible to install GitHub CLI and open
 browser login when required, then switch the repository origin to SSH and run `make install-dotfiles` to copy
-dotfiles into `~/`. Use `undo-provision.sh --keep-gh-login` to retain
+dotfiles into `~/`, then install missing tools used by the root Makefile targets.
+Use `undo-provision.sh --keep-gh-login` to retain
 authentication between test runs. See [the provisioning documentation](ansible/README.md) for
 details and manual prerequisites.
 

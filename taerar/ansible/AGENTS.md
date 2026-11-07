@@ -15,6 +15,11 @@
 - Set `ansible_python_interpreter: "{{ ansible_playbook_python }}"` for local
   playbooks so tasks use the same Python environment as Ansible, without system
   interpreter discovery or hardcoded Homebrew version paths.
+- Keep `make-dependencies_playbook.yml` and its README dependency table aligned
+  with the root Makefile and the scripts its targets invoke. Install runtime
+  dependencies through Ansible, preserve existing tools, and track new formulae,
+  casks and dependencies for undo. Do not run privileged/server Make targets or
+  start unrelated account logins as part of installing their dependencies.
 - Whenever `provision.sh` gains or changes a persistent action, update
   `undo-provision.sh` in the same change to reverse it in the opposite order.
 - Keep `undo-provision.sh --keep-gh-login` usable for repeated development tests:

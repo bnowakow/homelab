@@ -3,6 +3,36 @@
 # /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/undo-provision.sh)"
 set -euo pipefail
 
+undo_homebrew_manifest() {
+  local state_dir=$1 manifest=$2 kind=$3
+  [[ -f "$state_dir/$manifest" ]] || return 0
+  local brew_bin installed package
+  local packages=()
+  brew_bin=$(command -v brew || true)
+  if [[ -z "$brew_bin" ]]; then
+    if [[ -x /opt/homebrew/bin/brew ]]; then
+      brew_bin=/opt/homebrew/bin/brew
+    elif [[ -x /usr/local/bin/brew ]]; then
+      brew_bin=/usr/local/bin/brew
+    else
+      echo "Homebrew is unavailable; cannot undo $manifest." >&2
+      return 1
+    fi
+  fi
+  installed=$("$brew_bin" list "--$kind")
+  while IFS= read -r package; do
+    [[ -n "$package" ]] || continue
+    if [[ $'\n'"$installed"$'\n' == *$'\n'"$package"$'\n'* ]]; then
+      packages+=("$package")
+    fi
+  done < "$state_dir/$manifest"
+  if [[ ${#packages[@]} -gt 0 ]]; then
+    echo "Removing $manifest installed by provisioning: ${packages[*]}"
+    HOMEBREW_NO_AUTOREMOVE=1 "$brew_bin" uninstall "--$kind" --force "${packages[@]}"
+  fi
+  rm "$state_dir/$manifest"
+}
+
 main() {
   local keep_gh_login=false argument
   for argument in "$@"; do
@@ -29,7 +59,12 @@ main() {
     return 0
   fi
 
-  # Restore dotfiles first, before restoring any pre-login Git configuration.
+  # This stage was installed last. Remove casks before their formula dependencies.
+  undo_homebrew_manifest "$state_dir" make-dependencies-casks cask
+  undo_homebrew_manifest "$state_dir" make-dependencies-formulae formula
+  rm -f "$state_dir/make-dependencies-casks.tmp" "$state_dir/make-dependencies-formulae.tmp"
+
+  # Restore dotfiles before restoring any pre-login Git configuration.
   if [[ -d "$state_dir/dotfiles" ]]; then
     local snapshot name
     for snapshot in "$state_dir"/dotfiles/file-*; do
