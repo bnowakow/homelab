@@ -2,6 +2,8 @@
   hosts: localhost
   connection: local
   gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: Apply make install-dotfiles with provisioning rollback snapshots
       ansible.builtin.command: make install-dotfiles

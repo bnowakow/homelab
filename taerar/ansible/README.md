@@ -61,6 +61,9 @@ It loads Homebrew's environment for subsequent steps in the script.
 Next it reuses an existing `ansible-playbook` command, or installs the `ansible`
 Homebrew formula and verifies it with `ansible-playbook --version`. Missing
 formulae are recorded before installation so partial installs can be undone.
+Local playbooks explicitly use `ansible_playbook_python`, the interpreter running
+Ansible, rather than discovering `/usr/bin/python3`. No separate Python manager
+or additional Python installation is required for these playbooks.
 
 ## Undoing provisioning during testing
 

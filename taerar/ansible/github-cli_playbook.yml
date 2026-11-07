@@ -3,6 +3,7 @@
   connection: local
   gather_facts: false
   vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
     state_dir: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
     gh_config_dir: "{{ lookup('env', 'GH_CONFIG_DIR') or (lookup('env', 'XDG_CONFIG_HOME') or lookup('env', 'HOME') + '/.config') + '/gh' }}"
   tasks:

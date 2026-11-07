@@ -12,6 +12,9 @@
   installed, implement all subsequent provisioning actions as Ansible playbook
   tasks, invoked by `provision.sh`. This includes the planned dotfile installation
   (`make install-dotfiles`); do not add it as a direct shell provisioning step.
+- Set `ansible_python_interpreter: "{{ ansible_playbook_python }}"` for local
+  playbooks so tasks use the same Python environment as Ansible, without system
+  interpreter discovery or hardcoded Homebrew version paths.
 - Whenever `provision.sh` gains or changes a persistent action, update
   `undo-provision.sh` in the same change to reverse it in the opposite order.
 - Keep `undo-provision.sh --keep-gh-login` usable for repeated development tests:
