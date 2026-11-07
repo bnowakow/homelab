@@ -74,7 +74,13 @@
                 git_config="${XDG_CONFIG_HOME:-$HOME/.config}/git/config"
               fi
               printf '%s\n' "$git_config" > "$snapshot/git-config-path"
-              if [[ -e "$git_config" || -L "$git_config" ]]; then
+              if [[ "$git_config" == "$HOME/.gitconfig" && -d "$STATE_DIR/dotfiles/file-.gitconfig" ]]; then
+                # Preserve the pre-dotfiles baseline for a later full undo,
+                # even if GitHub preferences survive an earlier undo.
+                if [[ -e "$STATE_DIR/dotfiles/file-.gitconfig/original" || -L "$STATE_DIR/dotfiles/file-.gitconfig/original" ]]; then
+                  cp -pP "$STATE_DIR/dotfiles/file-.gitconfig/original" "$snapshot/git-config"
+                fi
+              elif [[ -e "$git_config" || -L "$git_config" ]]; then
                 cp -pP "$git_config" "$snapshot/git-config"
               fi
               mv "$snapshot" "$STATE_DIR/gh-login"

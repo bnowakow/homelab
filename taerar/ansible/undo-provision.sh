@@ -168,27 +168,6 @@ PY
   undo_homebrew_manifest "$state_dir" make-dependencies-formulae formula
   rm -f "$state_dir/make-dependencies-casks.tmp" "$state_dir/make-dependencies-formulae.tmp"
 
-  # Restore dotfiles before restoring any pre-login Git configuration.
-  if [[ -d "$state_dir/dotfiles" ]]; then
-    local snapshot name
-    for snapshot in "$state_dir"/dotfiles/file-*; do
-      [[ -d "$snapshot" ]] || continue
-      name=${snapshot##*/file-}
-      rm -f -- "$HOME/$name"
-      if [[ -e "$snapshot/original" || -L "$snapshot/original" ]]; then
-        cp -pP "$snapshot/original" "$HOME/$name"
-      fi
-      rm -rf -- "$snapshot"
-      echo "Restored pre-provisioning state of ~/$name"
-    done
-    # Incomplete snapshots were never published and never modified a dotfile.
-    for snapshot in "$state_dir"/dotfiles/pending.*; do
-      [[ -d "$snapshot" ]] || continue
-      rm -rf -- "$snapshot"
-    done
-    rmdir "$state_dir/dotfiles"
-  fi
-
   # Restore origin before undoing login or removing the checkout.
   if [[ -d "$state_dir/repo-origin" ]]; then
     if [[ -e "$repo_dir/.git" ]]; then
@@ -221,6 +200,8 @@ PY
     [[ -d "$origin_pending" ]] || continue
     rm -rf -- "$origin_pending"
   done
+
+  local gh_restored_home_gitconfig=false
 
   # Undo browser login while gh is still installed. Credentials remain in the
   # macOS keychain/config directory when gh=preferences is selected in --keep.
@@ -259,6 +240,7 @@ PY
         return 1
       fi
       rm -f -- "$git_config"
+      if [[ "$git_config" == "$HOME/.gitconfig" ]]; then gh_restored_home_gitconfig=true; fi
       if [[ -e "$state_dir/gh-login/git-config" || -L "$state_dir/gh-login/git-config" ]]; then
         mkdir -p "$(dirname "$git_config")"
         cp -pP "$state_dir/gh-login/git-config" "$git_config"
@@ -272,6 +254,33 @@ PY
     [[ -d "$pending" ]] || continue
     rm -rf -- "$pending"
   done
+
+  # Restore dotfiles after GitHub rollback, before undoing 1Password setup.
+  if [[ -d "$state_dir/dotfiles" ]]; then
+    local snapshot name
+    for snapshot in "$state_dir"/dotfiles/file-*; do
+      [[ -d "$snapshot" ]] || continue
+      name=${snapshot##*/file-}
+      # GitHub rollback already restored the earlier baseline for this shared
+      # file, including snapshots from the previous provisioning order.
+      if [[ "$name" == .gitconfig && "$gh_restored_home_gitconfig" == true ]]; then
+        rm -rf -- "$snapshot"
+        continue
+      fi
+      rm -f -- "$HOME/$name"
+      if [[ -e "$snapshot/original" || -L "$snapshot/original" ]]; then
+        cp -pP "$snapshot/original" "$HOME/$name"
+      fi
+      rm -rf -- "$snapshot"
+      echo "Restored pre-provisioning state of ~/$name"
+    done
+    # Incomplete snapshots were never published and never modified a dotfile.
+    for snapshot in "$state_dir"/dotfiles/pending.*; do
+      [[ -d "$snapshot" ]] || continue
+      rm -rf -- "$snapshot"
+    done
+    rmdir "$state_dir/dotfiles"
+  fi
 
   # Reverse formula installations in order, preserving pre-existing packages.
   local package brew_bin formula installed

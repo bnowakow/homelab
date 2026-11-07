@@ -129,13 +129,13 @@ ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/onepassword_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
 ansible-playbook -i localhost, -c local \
+  "$repo_dir/taerar/ansible/dotfiles_playbook.yml" \
+  --extra-vars "{\"provision_unattended\": $unattended}"
+ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/github-cli_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/repository-origin_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/dotfiles_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/make-dependencies_playbook.yml" \
