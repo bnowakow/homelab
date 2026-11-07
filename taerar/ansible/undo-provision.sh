@@ -277,6 +277,24 @@ PY
   local package brew_bin formula installed
   for package in gh onepassword terminal-ui ansible; do
     if [[ "$package" == onepassword ]]; then
+      # SSH client config is outside the app and is restored in all keep modes.
+      if [[ -d "$state_dir/ssh-agent-config" ]]; then
+        rm -f -- "$HOME/.ssh/config"
+        if [[ -f "$state_dir/ssh-agent-config/original" ]]; then
+          mkdir -p "$HOME/.ssh"
+          cp -p "$state_dir/ssh-agent-config/original" "$HOME/.ssh/config"
+        fi
+        if [[ -f "$state_dir/ssh-agent-config/directory-created" && -d "$HOME/.ssh" ]]; then
+          # Preserve any unrelated keys/files the user has added since setup.
+          if [[ -z "$(ls -A "$HOME/.ssh")" ]]; then rmdir "$HOME/.ssh"; fi
+        fi
+        rm -rf -- "$state_dir/ssh-agent-config"
+      fi
+      local ssh_pending
+      for ssh_pending in "$state_dir"/ssh-agent-config-pending.*; do
+        [[ -d "$ssh_pending" ]] || continue
+        rm -rf -- "$ssh_pending"
+      done
       if [[ "$keep_onepassword" == true ]]; then continue; fi
       if [[ -f "$state_dir/onepassword-opened" ]]; then
         if pgrep -x -u "$(id -u)" 1Password >/dev/null; then

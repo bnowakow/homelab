@@ -162,9 +162,11 @@ or administrator authentication even with `--unattended`.
 After installation, sign in to 1Password for Mac and enable **Safari > Settings >
 Extensions > 1Password for Safari**, approving website permissions as needed.
 Provisioning opens 1Password and first asks through dialog whether you have
-signed in and unlocked it. Only after confirmation does a second dialog ask you
+signed in and unlocked it. After confirmation, Ansible configures a GitHub-only
+`IdentityAgent` block in `~/.ssh/config`, unless already configured correctly.
+It snapshots the original file and permissions before editing. A second dialog asks you
 to enable **1Password > Settings > Developer > Use the SSH Agent**, make your SSH
-key available, register its public key on GitHub, configure SSH to use the agent,
+key available, register its public key on GitHub,
 and enable the Safari extension. It then checks the 1Password agent with
 `ssh-add -l` using its socket. If unavailable or empty, provisioning stops with
 instructions. Both checkpoints appear with `--unattended`; Stop/Escape aborts.
@@ -190,8 +192,17 @@ unchanged. If GitHub is not yet a trusted SSH host, verify its host key by runni
 `ssh -T git@github.com` in Terminal, then rerun provisioning. A valid key must be
 registered on GitHub and SSH must be configured to use the agent, as described
 in [1Password SSH setup](https://www.1password.dev/ssh/get-started).
-These checks make no persistent changes; manually enabled agent settings remain
-in 1Password preferences and are preserved by undo.
+The checks are read-only. Undo restores the original SSH config (or removes a
+newly created file/directory when empty) in every `--keep` mode. Later SSH config
+edits are replaced by that snapshot. Existing correct configurations are left
+untouched. Config files linked to another file are not automatically rewritten;
+configure the source file if needed. Manually enabled agent settings remain in
+1Password preferences and are preserved by undo.
+
+1Password protects sensitive settings with signatures and does not support
+arbitrary direct settings-file edits. Enabling its SSH agent and approving Safari
+extension permissions remain interactive UI steps; the playbook does not change
+those settings using private file formats.
 
 Finally, `dotfiles_playbook.yml` runs `make install-dotfiles` from `~/code/homelab`.
 It uses the existing shared file list and hostname-specific `.screenrc` mapping.
