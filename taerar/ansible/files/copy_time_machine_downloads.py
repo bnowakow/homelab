@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,42 @@ class CopyError(Exception):
     pass
 
 
+# Readable only with Full Disk Access; listing it reads no private data.
+FULL_DISK_ACCESS_PROBE = "/Library/Application Support/com.apple.TCC"
+
+
+def responsible_app():
+    """Name the outermost .app above this process; macOS checks that app."""
+    pid, app = os.getpid(), None
+    for _ in range(32):
+        result = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        parts = result.stdout.strip().split(None, 1)
+        if result.returncode != 0 or len(parts) != 2:
+            break
+        parent, command = parts
+        if ".app/Contents/" in command:
+            app = command.split(".app/Contents/")[0].rsplit("/", 1)[-1]
+        pid = int(parent)
+        if pid <= 1:
+            break
+    return app
+
+
+def check_full_disk_access():
+    try:
+        os.listdir(FULL_DISK_ACCESS_PROBE)
+    except PermissionError:
+        app = responsible_app()
+        target = f"the {app} app" if app else "the terminal app running provisioning"
+        raise CopyError(
+            f"Full Disk Access is not enabled for {target}, so macOS will not let it read "
+            f"Time Machine backups. Enable {app or 'it'} in System Settings > Privacy & "
+            "Security > Full Disk Access, quit and reopen it, then rerun provisioning.") from None
+    except OSError:
+        pass  # Probe unavailable; rely on the errors from reading the backup.
+
+
 def progress(message):
     print(message, file=sys.stderr, flush=True)
 
@@ -38,24 +75,36 @@ ATTACH_FAILED = ("Could not attach the backup read-only. If Time Machine is curr
                  "using it, wait until that backup finishes, then rerun provisioning.")
 
 
-def image_devices(output):
-    entities = plistlib.loads(output).get("system-entities", [])
-    devices = [entity["dev-entry"] for entity in entities if "dev-entry" in entity]
-    if not devices:
+def image_entities(output):
+    entities = [entity for entity in plistlib.loads(output).get("system-entities", [])
+                if "dev-entry" in entity]
+    if not entities:
         raise CopyError("hdiutil attached the backup but reported no device.")
-    return devices
+    return entities
 
 
 def attach(bundle, mountpoint):
-    """Attach read-only and mount the backup volume; return the image device."""
+    """Attach read-only and mount the backup volume.
+
+    Returns (image device, all image devices, mounted volume device).
+    """
     # stdin stays on the terminal so hdiutil can ask for an image password.
     result = subprocess.run(
         ["hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen", "-plist",
          "-mountpoint", str(mountpoint), str(bundle)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if result.returncode == 0:
-        # The shortest entry (e.g. /dev/disk12) is the whole image.
-        return min(image_devices(result.stdout), key=len)
+        entities = image_entities(result.stdout)
+        devices = [entity["dev-entry"] for entity in entities]
+        # The shortest entry (e.g. /dev/disk8) is the whole image.
+        whole = min(devices, key=len)
+        volume = next((entity["dev-entry"] for entity in entities
+                       if entity.get("mount-point") and Path(entity["mount-point"]).resolve() == mountpoint.resolve()),
+                      None)
+        if volume is None:
+            detach(whole, devices)
+            raise CopyError("hdiutil attached the backup but did not report its mounted volume.")
+        return whole, devices, volume
     if b"no mountable file systems" not in result.stderr:
         progress(result.stderr.decode(errors="replace").strip())
         raise CopyError(ATTACH_FAILED)
@@ -65,22 +114,31 @@ def attach(bundle, mountpoint):
                             stdout=subprocess.PIPE)
     if result.returncode != 0:
         raise CopyError(ATTACH_FAILED)
-    devices = image_devices(result.stdout)
+    devices = [entity["dev-entry"] for entity in image_entities(result.stdout)]
     whole = min(devices, key=len)
     try:
-        mount_apfs_backup(devices, mountpoint)
+        volume = mount_apfs_backup(devices, mountpoint)
     except BaseException:
-        detach(whole)
+        detach(whole, devices)
         raise
-    return whole
+    return whole, devices, volume
 
 
 def mount_apfs_backup(devices, mountpoint):
-    stores = {device.removeprefix("/dev/") for device in devices}
+    """Mount the image's APFS backup volume read-only; return its device."""
+    # hdiutil may list only whole disks (e.g. disk8 and container disk10), not
+    # the partition (disk8s1) that backs the container, so compare whole disks.
+    def whole_disk(identifier):
+        match = re.match(r"(?:/dev/)?(disk\d+)", identifier or "")
+        return match.group(1) if match else None
+
+    image_disks = {whole_disk(device) for device in devices} - {None}
     listing = subprocess.run(["diskutil", "apfs", "list", "-plist"], stdout=subprocess.PIPE)
     containers = plistlib.loads(listing.stdout).get("Containers", []) if listing.returncode == 0 else []
     volumes = [volume for container in containers
-               if any(store.get("DeviceIdentifier") in stores for store in container.get("PhysicalStores", []))
+               if whole_disk(container.get("ContainerReference")) in image_disks
+               or any(whole_disk(store.get("DeviceIdentifier")) in image_disks
+                      for store in container.get("PhysicalStores", []))
                for volume in container.get("Volumes", [])]
     if not volumes:
         raise CopyError("The backup image contains no mountable APFS volume.")
@@ -88,7 +146,7 @@ def mount_apfs_backup(devices, mountpoint):
     identifier = volume["DeviceIdentifier"]
     mount = ["diskutil", "mount", "readOnly", "-mountPoint", str(mountpoint), identifier]
     if subprocess.run(mount, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
-        return
+        return "/dev/" + identifier
     if not (volume.get("Locked") or volume.get("Encryption") or volume.get("FileVault")):
         raise CopyError("Could not mount the backup volume read-only.")
     progress(f"The backup volume {volume.get('Name', identifier)} is encrypted. "
@@ -97,34 +155,65 @@ def mount_apfs_backup(devices, mountpoint):
         raise CopyError("Could not unlock the encrypted backup. Check the backup password and rerun.")
     if subprocess.run(mount, stdout=subprocess.DEVNULL).returncode != 0:
         raise CopyError("Could not mount the unlocked backup volume read-only.")
+    return "/dev/" + identifier
 
 
-def detach(device):
-    for arguments in (["hdiutil", "detach", device], ["hdiutil", "detach", "-force", device]):
-        if subprocess.run(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+def detach(whole, devices=()):
+    """Detach the image; fall back to diskutil, which can also remove mounts
+    that hdiutil reports as busy."""
+    attempts = [["hdiutil", "detach", whole], ["hdiutil", "detach", "-force", whole]]
+    # e.g. the synthesized APFS container disk10 of image disk8.
+    disks = {match.group(0) for match in (re.match(r"/dev/disk\d+", device) for device in devices) if match}
+    attempts += [["diskutil", "unmountDisk", "force", disk] for disk in sorted(disks - {whole})]
+    attempts += [["diskutil", "eject", whole]]
+    for arguments in attempts:
+        result = subprocess.run(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if result.returncode == 0 and arguments[1] in ("detach", "eject"):
             return True
-    progress(f"Warning: could not detach {device}. Eject it in Finder or run: hdiutil detach {device}")
+    progress(f"Warning: could not detach {whole}. Eject it in Finder or run: diskutil eject {whole}")
     return False
 
 
-def latest_backup(mountpoint):
-    """Return the newest backup directory, mounting its snapshot if needed."""
-    result = subprocess.run(["tmutil", "listbackups", "-d", str(mountpoint)],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if "Full Disk Access" in result.stderr + result.stdout:
-        raise CopyError(FULL_DISK_ACCESS)
-    backups = [Path(line) for line in result.stdout.splitlines() if line.strip()]
-    backups = [path for path in backups if path.is_dir()]
-    if not backups:
-        # HFS+ backups keep a Latest link per computer; APFS needs tmutil above.
-        try:
-            backups = sorted(path for path in (mountpoint / "Backups.backupdb").glob("*/Latest")
-                             if path.is_dir())
-        except PermissionError as error:
-            raise CopyError(FULL_DISK_ACCESS) from error
+SNAPSHOT_NAME = re.compile(r"com\.apple\.TimeMachine\.(\d{4}-\d{2}-\d{2}-\d{6})\.backup")
+
+
+def latest_backup(mountpoint, volume, snapshot_mountpoint):
+    """Mount the newest completed backup read-only; return its backup folder.
+
+    APFS Time Machine backups are volume snapshots. Folders at the volume
+    root (e.g. an unfinished <date>.backup) are not completed backups.
+    tmutil is deliberately not used: it mounts every snapshot through a root
+    helper, which enforces the source Mac's user IDs and keeps the image busy.
+    """
+    listing = subprocess.run(["diskutil", "apfs", "listSnapshots", "-plist", volume],
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    names = []
+    if listing.returncode == 0:
+        names = [snapshot.get("SnapshotName", "")
+                 for snapshot in plistlib.loads(listing.stdout).get("Snapshots", [])]
+    dates = sorted(match.group(1) for match in map(SNAPSHOT_NAME.fullmatch, names) if match)
+    if dates:
+        name = f"com.apple.TimeMachine.{dates[-1]}.backup"
+        # noowners: the source Mac's user IDs need not match this Mac's.
+        result = subprocess.run(["mount_apfs", "-o", "rdonly,nobrowse,noowners", "-s", name,
+                                 volume, str(snapshot_mountpoint)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        if result.returncode != 0:
+            raise CopyError(f"Could not mount the latest backup ({dates[-1]}) read-only: "
+                            + " ".join(result.stderr.split()))
+        backup = snapshot_mountpoint / f"{dates[-1]}.backup"
+        if not backup.is_dir():
+            raise CopyError(f"The latest backup snapshot has no {dates[-1]}.backup folder.")
+        return backup
+    # Older HFS+ backups keep a Latest link per computer instead of snapshots.
+    try:
+        backups = sorted(path for path in (mountpoint / "Backups.backupdb").glob("*/Latest")
+                         if path.is_dir())
+    except PermissionError as error:
+        raise CopyError(FULL_DISK_ACCESS) from error
     if not backups:
         raise CopyError("No completed backups were found in this Time Machine bundle.")
-    return max(backups, key=lambda path: path.name)
+    return backups[-1]
 
 
 def find_downloads(backup, user):
@@ -209,12 +298,15 @@ def main():
         raise CopyError("Environment must be PROD or TEST.")
     if not bundle.is_dir():
         raise CopyError(f"Backup not found: {bundle}. Connect the Time Machine share in Finder.")
+    # Fail in seconds, before the slow network attach, when access is missing.
+    check_full_disk_access()
     mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-"))
-    device = None
+    snapshot_mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-snapshot-"))
+    whole = None
     try:
         progress(f"Attaching {bundle.name} read-only (this can take a while over the network)...")
-        device = attach(bundle, mountpoint)
-        backup = latest_backup(mountpoint)
+        whole, devices, volume = attach(bundle, mountpoint)
+        backup = latest_backup(mountpoint, volume, snapshot_mountpoint)
         source = find_downloads(backup, os.environ.get("USER") or Path.home().name)
         progress(f"Latest backup: {backup.name}")
         try:
@@ -228,18 +320,26 @@ def main():
         if needed + FREE_SPACE_MARGIN > free:
             raise CopyError(f"Not enough free space: copying needs {needed / 1024 ** 3:.1f} GiB "
                             f"plus 1 GiB headroom, but only {free / 1024 ** 3:.1f} GiB is free.")
-        progress(f"Copying {len(files)} item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}...")
+        new = sum(1 for relative, _ in files
+                  if not ((destination / relative).exists() or (destination / relative).is_symlink()))
+        progress(f"Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
+                 f"{len(files) - new} already present will be kept...")
         copied, skipped = copy_files(files, destination, manifest)
         print(json.dumps({"backup": backup.name, "mode": mode, "copied": copied,
                           "skipped_existing": skipped,
                           "copied_names": [str(relative) for relative, _ in files][:5]}))
     finally:
-        if device:
-            detach(device)
-        try:
-            mountpoint.rmdir()
-        except OSError:
-            pass
+        # Unmount our snapshot mount first; it would otherwise keep the image busy.
+        if os.path.ismount(snapshot_mountpoint):
+            subprocess.run(["umount", str(snapshot_mountpoint)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if whole:
+            detach(whole, devices)
+        for folder in (snapshot_mountpoint, mountpoint):
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

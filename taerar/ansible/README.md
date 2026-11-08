@@ -439,19 +439,35 @@ It is cleared when any earlier Time Machine answer changes.
    attaches without mounting, runs `diskutil apfs unlockVolume`, which asks for
    the Time Machine backup password in the terminal (never stored), and mounts it
    read-only. If Time Machine is currently using the bundle, attaching fails;
-   rerun after that backup finishes.
-2. Finds the newest backup with `tmutil listbackups -d` (or `Backups.backupdb/*/Latest`
-   for HFS+ backups) and `Users/$USER/Downloads` in its backed-up volume,
-   preferring the `… - Data` volume. A missing folder stops with the user names
-   found in the backup.
+   rerun after that backup finishes. Detaching falls back to
+   `diskutil unmountDisk force` and `diskutil eject` when `hdiutil` reports the
+   image as busy.
+2. Finds the newest completed backup: APFS Time Machine backups are volume
+   snapshots, so it lists them with `diskutil apfs listSnapshots`, picks the
+   newest `com.apple.TimeMachine.<date>.backup`, and mounts only that snapshot
+   with `mount_apfs -o rdonly,nobrowse,noowners`. A `<date>.backup` folder at
+   the volume root without a snapshot is an unfinished backup and is ignored.
+   `noowners` matters because the same user can have a different numeric ID
+   on each Mac (for example `sup` is 501 on Taerar and 502 on Jakku). `tmutil`
+   is deliberately not used: it mounts every snapshot through a root helper,
+   which enforces the source Mac's IDs and keeps the image busy. HFS+ backups
+   use `Backups.backupdb/*/Latest`. It then finds `Users/$USER/Downloads` in the
+   backed-up volume, preferring the `… - Data` volume (the snapshot holds
+   `<date>.backup/<Mac> HD - Data/Users/...`). A missing folder stops with the
+   user names found in the backup.
 3. Checks free space (copy size plus 1 GiB headroom), then copies without ever
    overwriting existing files. Symlinks are copied as links; `.DS_Store`,
    `.localized` and empty folders are skipped.
 
 **Full Disk Access is required:** macOS denies reading Time Machine backup
 contents otherwise. Enable the terminal app in **System Settings > Privacy &
-Security > Full Disk Access**, quit and reopen it, then rerun. Provisioning only
-explains this; it never changes privacy settings. The Time Machine share must
+Security > Full Disk Access**, quit and reopen it, then rerun. Before the slow
+attach, the helper checks access by listing
+`/Library/Application Support/com.apple.TCC` (readable only with Full Disk
+Access) and names the app macOS checks: the outermost `.app` above the
+process. When run from an embedded terminal, such as the Claude app's, that
+app needs access, not Terminal. Provisioning only explains this; it never
+changes privacy settings. The Time Machine share must
 be connected in Finder (a reused Finder confirmation does not reconnect it).
 Failures stop with the helper's message, keep saved answers, and can be rerun.
 

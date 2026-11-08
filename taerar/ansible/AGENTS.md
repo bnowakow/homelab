@@ -162,6 +162,10 @@
   existing files; check free space first. Record each created file/folder in
   the state directory before creating it; undo removes only unchanged copies and
   empty created folders. Explain Full Disk Access; never change privacy settings.
+  Pick the newest com.apple.TimeMachine.*.backup snapshot via diskutil and mount
+  only it read-only with noowners; ignore root-level folders without a snapshot.
+  Do not use tmutil to list/mount backups (root-owned mounts, wrong owners, busy
+  image). Unmount the snapshot before detaching; fall back to diskutil eject.
 - After a new version number is accepted, ask last whether to copy data from an
   existing version of the selected computer: "none" or one row per existing
   version (including unversioned). Store the semantic value in time_machine.copy
