@@ -63,6 +63,11 @@
   through Ansible, preserving the original SSH config for undo in every keep
   mode. Leave an already-correct config untouched. Do not edit 1Password private
   settings.json or silently enable Safari permissions; those remain UI steps.
+- Detect 1Password macOS AutoFill read-only via pluginkit's credential-provider
+  election (+ ready, - not ready, anything else unknown). Never enable it with
+  pluginkit -e or other automation; list it in the setup dialog as a manual
+  System Settings step. Save its confirmation under onepassword.autofill,
+  separate from onepassword.setup, so older saved answers cannot hide it.
 - Install dialog early through Ansible. Show incomplete/unverified 1Password
   readiness checkpoints even with --unattended, but skip verified completed
   checkpoints and explicitly reused saved confirmations. Unknown/unreadable state must never be treated as ready. Abort/Escape

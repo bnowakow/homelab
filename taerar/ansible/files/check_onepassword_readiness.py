@@ -90,6 +90,26 @@ def safari_status(home):
     return "ready" if enabled and not unreadable else "unknown"
 
 
+def autofill_status(environment):
+    # PlugInKit marks the user's election for each AutoFill (credential provider)
+    # extension: "+" enabled, "-" disabled. Anything else (missing extension,
+    # failed query, other markers) is unknown, never assumed enabled.
+    result = run(["pluginkit", "-m", "-v", "-p",
+                  "com.apple.authentication-services-credential-provider-ui"], environment)
+    if result is None or result.returncode != 0:
+        return "unknown"
+    states = set()
+    for line in result.stdout.splitlines():
+        match = re.match(r"^\s*([+\-!=?]?)\s*com\.1password\.", line)
+        if match:
+            states.add(match.group(1))
+    if states == {"+"}:
+        return "ready"
+    if "-" in states:
+        return "not_ready"
+    return "unknown"
+
+
 def github_status(environment, socket):
     # GitHub returns 1 after successful authentication because it has no shell.
     # Test the authenticated greeting, not just the exit code or repo access.
@@ -131,7 +151,7 @@ def main():
     if agent == "ready":
         github, github_reason = github_status(environment, socket)
     print(json.dumps({"agent": agent, "github": github, "github_reason": github_reason,
-                      "safari": safari_status(home)}))
+                      "safari": safari_status(home), "autofill": autofill_status(environment)}))
 
 
 if __name__ == "__main__":

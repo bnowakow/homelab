@@ -168,8 +168,9 @@ Otherwise it asks you to confirm sign-in and unlock before continuing.
 After sign-in is confirmed or verified, Ansible configures a GitHub-only
 `IdentityAgent` block in `~/.ssh/config`, unless already configured correctly.
 It snapshots the original file and permissions before editing. Next it checks
-agent availability, GitHub authentication with `ssh -T git@github.com`, and
-Safari extension enabled state. The SSH test recognizes GitHub's authenticated
+agent availability, GitHub authentication with `ssh -T git@github.com`,
+Safari extension enabled state, and whether 1Password is enabled for macOS
+AutoFill. The SSH test recognizes GitHub's authenticated
 greeting with exit code 1 as success, allows up to 30 seconds for authorization,
 and distinguishes key rejection, host verification, network and timeout failures.
 The dialog lists only checks still needing attention; unknown Safari state does
@@ -178,13 +179,28 @@ second dialog appears only if at least one status is not ready or unknown and
 its confirmation was not explicitly reused from saved answers. It asks you
 to enable **1Password > Settings > Developer > Use the SSH Agent**, make your SSH
 key available, register its public key on GitHub,
-and enable the Safari extension. It then checks the 1Password agent with
+enable the Safari extension, and enable macOS AutoFill. It then checks the 1Password agent with
 `ssh-add -l` using its socket. If unavailable or empty, provisioning stops with
 instructions. Unsaved incomplete/unverified checkpoints still appear with `--unattended`; Abort/Escape
 aborts. Safari detection reads extension-state plists for default and discovered
 profiles. Unreadable, missing, conflicting or unrecognized state falls back to
 manual confirmation; app installation/PlugInKit registration is not proof of
-activation. Saved confirmations can suppress repeated manual prompts when explicitly reused;
+activation.
+
+macOS AutoFill (saving and filling passwords in desktop apps) is detected
+read-only with
+`pluginkit -m -v -p com.apple.authentication-services-credential-provider-ui`:
+a `+` before `com.1password…autofill-extension` means enabled, `-` means
+disabled, and a missing or unreadable entry is unknown. If it is not enabled,
+the same setup dialog asks you to choose **Set up macOS AutoFill** in 1Password
+or enable 1Password in **System Settings > General > AutoFill & Passwords**.
+Provisioning never enables it itself (for example with `pluginkit -e use`):
+choosing a system password provider is a macOS security setting you must
+approve. Its confirmation is saved separately as `onepassword.autofill`, so an
+older saved `onepassword.setup` answer does not hide it. Undo leaves the setting
+unchanged; removing the 1Password app also removes its AutoFill extension.
+
+Saved confirmations can suppress repeated manual prompts when explicitly reused;
 live checks still run and the final agent/repository checks must pass.
 No app settings are changed before the sign-in confirmation. Undo removes only applications/tools installed
 by provisioning. It does not use Homebrew `--zap` or delete vault data, app
@@ -391,7 +407,8 @@ Wizard answers are saved immediately after each accepted step to
 `taerar/ansible/time-machine-choices.json` (permissions `0600`, ignored by Git).
 Despite its original name, this is now the shared store for all provisioning
 wizards: 1Password sign-in confirmation, SSH-agent/Safari setup confirmation,
-Finder connection confirmation, and each Time Machine choice. Abort and invalid
+macOS AutoFill confirmation, Finder connection confirmation, and each Time
+Machine choice. Abort and invalid
 input are never saved as accepted answers; previously accepted steps survive
 later cancellation or failure. Choosing a TODO path records that choice too.
 

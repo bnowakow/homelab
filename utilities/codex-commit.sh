@@ -163,6 +163,44 @@ run_agent() {
 	(cd "$repo_root" && printf '%s\n' "$prompt" | "${agent_command[@]}" "${claude_args[@]}") >"$output_file"
 }
 
+agent_needs_login() {
+	local output_file=$1
+	[ "$commit_agent" = claude ] &&
+		LC_ALL=C grep -Eiq 'not logged in|please run /login|invalid api key|oauth token (has )?expired' "$output_file"
+}
+
+# Run the agent; if Claude reports it is not logged in, offer to run
+# `claude auth login` and retry once. Declining keeps the original failure.
+run_agent_with_login() {
+	local output_file=$2
+
+	if run_agent "$@"; then
+		return 0
+	fi
+
+	if ! agent_needs_login "$output_file"; then
+		return 1
+	fi
+
+	if ! confirm "$agent_label login" "$agent_label is not logged in:
+
+$(head -n 3 "$output_file")
+
+Run '${agent_command[*]} auth login' now and retry?"; then
+		echo "Skipping login. Run 'claude auth login' and try again." >&2
+		return 1
+	fi
+
+	# Callers discard stdout, so send the login URL/prompts to stderr.
+	if ! "${agent_command[@]}" auth login >&2; then
+		echo "$agent_label login failed." >&2
+		return 1
+	fi
+
+	echo "Logged in. Retrying $agent_label..." >&2
+	run_agent "$@"
+}
+
 terminal_ui_unavailable_reason() {
 	if [ ! -e /dev/tty ]; then
 		printf 'no controlling terminal is available'
@@ -401,7 +439,7 @@ resolve_pull_conflict_with_agent() {
 	printf 'Conflicted files:\n'
 	printf '  - %s\n' "${conflicted_files[@]}"
 
-	if ! run_agent workspace-write "$conflict_output" \
+	if ! run_agent_with_login workspace-write "$conflict_output" \
 		'Git is currently stopped on a pull/rebase conflict. Inspect the conflicted files, resolve the conflict markers in the working tree, preserve the intended behavior from both sides where possible, and do not commit, push, reset, abort, or continue the rebase. After editing, report whether all conflict markers and unmerged paths are resolved.'; then
 		echo "$agent_label failed while attempting to resolve the pull conflict."
 		cat "$conflict_output" >&2
@@ -505,7 +543,7 @@ tmp_files+=("$agent_output")
 find_commit_skill
 commit_prompt=$(build_commit_prompt)
 
-if ! run_agent read-only "$agent_output" "$commit_prompt" >/dev/null; then
+if ! run_agent_with_login read-only "$agent_output" "$commit_prompt" >/dev/null; then
 	# claude -p reports errors such as "Not logged in" on stdout, which
 	# run_agent captures, so surface it instead of exiting silently.
 	echo "$agent_label failed while generating the commit message:" >&2
