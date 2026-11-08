@@ -167,7 +167,12 @@ Otherwise it asks you to confirm sign-in and unlock before continuing.
 After sign-in is confirmed or verified, Ansible configures a GitHub-only
 `IdentityAgent` block in `~/.ssh/config`, unless already configured correctly.
 It snapshots the original file and permissions before editing. Next it checks
-agent availability, GitHub SSH access, and Safari extension enabled state. The
+agent availability, GitHub authentication with `ssh -T git@github.com`, and
+Safari extension enabled state. The SSH test recognizes GitHub's authenticated
+greeting with exit code 1 as success, allows up to 30 seconds for authorization,
+and distinguishes key rejection, host verification, network and timeout failures.
+The dialog lists only checks still needing attention; unknown Safari state does
+not cause it to ask you to redo working SSH setup. The
 second dialog appears only if at least one status is not ready or unknown. It asks you
 to enable **1Password > Settings > Developer > Use the SSH Agent**, make your SSH
 key available, register its public key on GitHub,

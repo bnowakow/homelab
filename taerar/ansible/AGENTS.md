@@ -54,6 +54,11 @@
   readiness checkpoints even with --unattended, but skip verified completed
   checkpoints. Unknown/unreadable state must never be treated as ready. No/Escape
   stops; do not read vault contents or log public keys/account data during probes.
+- Before the setup prompt, test `ssh -T git@github.com` with the 1Password agent
+  and strict host verification. GitHub's authenticated greeting plus exit code 1
+  means success. Distinguish authentication, host-key, network and timeout errors;
+  never tell the user to redo a verified completed step merely because Safari
+  state is unknown. Keep the later repository-specific SSH access check too.
 - Before any rollback, check the checkout for staged, unstaged and untracked
   files. If dirty, show a dialog offering stage-all + make codex-commit (then
   recheck), ignore and proceed, or exit without rollback. Default to Exit; treat

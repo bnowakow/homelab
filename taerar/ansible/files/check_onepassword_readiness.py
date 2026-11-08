@@ -4,7 +4,6 @@ import os
 from pathlib import Path
 import plistlib
 import re
-import shlex
 import signal
 import subprocess
 import sys
@@ -91,6 +90,34 @@ def safari_status(home):
     return "ready" if enabled and not unreadable else "unknown"
 
 
+def github_status(environment, socket):
+    # GitHub returns 1 after successful authentication because it has no shell.
+    # Test the authenticated greeting, not just the exit code or repo access.
+    result = run([
+        "ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        "-o", "UpdateHostKeys=no", "-o", "ConnectTimeout=10",
+        "-o", "IdentityAgent=" + socket, "git@github.com",
+    ], environment, timeout=30)
+    if result is None:
+        return "unknown", "timeout_or_unavailable"
+    output = result.stdout + result.stderr
+    if result.returncode == 1 and re.search(
+            r"Hi [^!\r\n]+! You've successfully authenticated, but GitHub does not provide shell access\.",
+            output):
+        return "ready", "authenticated"
+    if "Permission denied (publickey)" in output:
+        return "not_ready", "authentication"
+    if "REMOTE HOST IDENTIFICATION HAS CHANGED" in output:
+        return "unknown", "host_key_changed"
+    if "Host key verification failed" in output or re.search(r"No \S+ host key is known", output):
+        return "unknown", "host_key"
+    if any(message in output for message in (
+            "Could not resolve hostname", "Connection timed out", "Connection refused",
+            "Network is unreachable", "Operation timed out")):
+        return "unknown", "network"
+    return "unknown", "unrecognized_response"
+
+
 def main():
     home = Path(os.environ["HOME"])
     environment = dict(os.environ)
@@ -100,17 +127,11 @@ def main():
         print(json.dumps({"signin": agent_status(environment, prove_key_use=True)}))
         return
     agent = agent_status(environment)
-    github = "unknown"
+    github, github_reason = "unknown", "agent_not_ready"
     if agent == "ready":
-        environment["GIT_TERMINAL_PROMPT"] = "0"
-        environment["GIT_SSH_COMMAND"] = (
-            "ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no "
-            "-o ConnectTimeout=5 -o " + shlex.quote("IdentityAgent=" + socket))
-        result = run(["git", "ls-remote", "git@github.com:bnowakow/homelab.git", "HEAD"],
-                     environment)
-        if result is not None and result.returncode == 0:
-            github = "ready"
-    print(json.dumps({"agent": agent, "github": github, "safari": safari_status(home)}))
+        github, github_reason = github_status(environment, socket)
+    print(json.dumps({"agent": agent, "github": github, "github_reason": github_reason,
+                      "safari": safari_status(home)}))
 
 
 if __name__ == "__main__":
