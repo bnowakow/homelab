@@ -26,6 +26,10 @@
   GitHub CLI installation/login. Both stages can change ~/.gitconfig: preserve
   its pre-dotfiles baseline in the GitHub snapshot and handle older rollback
   snapshots without restoring a later copy over the original file.
+- Reuse `ansible/roles/prezto` for Linux and macOS. Keep clone/submodule/link
+  logic shared, and package/login-shell handling in platform wrappers. Default
+  target paths to `~`. Run the Mac Prezto playbook after dotfiles; retain existing
+  checkouts and files, tracking only newly created resources for undo.
 - Use `undo-provision.sh --keep JSON` for retention. Supported entries:
   `"gh":"preferences"`; `"1password":"app"` or `"preferences"`. Validate JSON
   before mutations, rejecting malformed input, duplicate keys, unknown keys and

@@ -132,6 +132,9 @@ ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/dotfiles_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
 ansible-playbook -i localhost, -c local \
+  "$repo_dir/taerar/ansible/prezto_playbook.yml" \
+  --extra-vars "{\"provision_unattended\": $unattended}"
+ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/github-cli_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
 ansible-playbook -i localhost, -c local \

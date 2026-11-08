@@ -1,0 +1,14 @@
+- name: Install Prezto and Powerlevel10k on this Mac
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  pre_tasks:
+    - name: Verify the macOS Zsh executable
+      ansible.builtin.command: /bin/zsh --version
+      changed_when: false
+  roles:
+    - role: "{{ playbook_dir }}/../../ansible/roles/prezto"
+      prezto_update_existing: false
+      prezto_rollback_dir: '~/.homelab-provision-state/prezto'

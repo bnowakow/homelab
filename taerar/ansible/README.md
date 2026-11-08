@@ -8,7 +8,7 @@ This document records the manual preparation required before running Ansible.
 `provision.sh` currently creates `~/code`, clones this repository if missing, and
 ensures Homebrew and Ansible are installed, then runs local Ansible playbooks
 to install 1Password for Mac and Safari, apply dotfiles, install GitHub CLI,
-log in through the browser, and switch the repository origin to SSH.
+install Prezto/Powerlevel10k, log in through the browser, and switch origin to SSH.
 
 ## Manual steps before running Ansible
 
@@ -130,8 +130,9 @@ Or download and run the version from `master`:
 
 Provisioning records its changes in `~/.homelab-provision-state`, including
 attempts that may fail partway through. Undo reverses them in order: remove Makefile dependency packages, restore
-the original origin URLs, undo the GitHub login unless retained, restore
-dotfiles, remove GitHub CLI and its new dependencies, remove
+the original origin URLs, undo the GitHub login unless retained, remove
+the newly created Prezto checkout/runcom links, restore dotfiles, remove GitHub
+CLI and its new dependencies, remove
 the newly installed Safari extension, 1Password desktop app and mas dependencies,
 remove early dialog dependencies, then remove Ansible and its newly installed dependencies, uninstall Homebrew using the
 official uninstaller without confirmation, remove the cloned
@@ -200,6 +201,15 @@ GitHub preferences through one undo does not reinstall dotfiles on a later full
 undo. Older snapshots are handled when restoring this shared file.
 Standalone `make install-dotfiles` retains its usual `~/.homelab-dotfiles-backup.*`
 backups and does not participate in provisioning rollback.
+
+Next, `prezto_playbook.yml` reuses [the shared Prezto role](../../ansible/roles/prezto/README.md)
+also used by `nas/ansible/proxmox-prezto_playbook.yml`. It installs `~/.zprezto`
+with recursive submodules, including Powerlevel10k, then links missing Zsh runcom
+files. Dotfiles already installed above select Powerlevel10k and supply its config.
+macOS uses `/bin/zsh`; the login shell is unchanged. Existing checkouts and Zsh
+files are preserved. Undo removes only the new checkout and runcom links, stopping
+if they have since been modified. Use a font with the needed prompt glyphs in
+your terminal if they do not display correctly.
 
 It then runs `github-cli_playbook.yml` locally, forwarding the `--unattended`
 setting. It installs `gh` using Homebrew and checks

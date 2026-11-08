@@ -255,7 +255,35 @@ PY
     rm -rf -- "$pending"
   done
 
-  # Restore dotfiles after GitHub rollback, before undoing 1Password setup.
+  # Prezto was installed after dotfiles; remove only resources it created.
+  if [[ -d "$state_dir/prezto" ]]; then
+    local prezto_marker prezto_name prezto_changes
+    for prezto_marker in "$state_dir"/prezto/link-*; do
+      [[ -f "$prezto_marker" ]] || continue
+      prezto_name=${prezto_marker##*/link-}
+      if [[ -L "$HOME/.$prezto_name" && "$(readlink "$HOME/.$prezto_name")" == "$HOME/.zprezto/runcoms/$prezto_name" ]]; then
+        rm -- "$HOME/.$prezto_name"
+      elif [[ -e "$HOME/.$prezto_name" || -L "$HOME/.$prezto_name" ]]; then
+        echo "Undo stopped: ~/.$prezto_name was changed after Prezto setup. Back it up before retrying." >&2
+        return 1
+      fi
+      rm "$prezto_marker"
+    done
+    if [[ -f "$state_dir/prezto/repo-created" ]]; then
+      if [[ -e "$HOME/.zprezto/.git" ]]; then
+        prezto_changes=$(git -C "$HOME/.zprezto" status --porcelain --untracked-files=all)
+        if [[ -n "$prezto_changes" ]]; then
+          echo 'Undo stopped: ~/.zprezto contains local changes. Back them up before retrying.' >&2
+          return 1
+        fi
+      fi
+      rm -rf -- "$HOME/.zprezto"
+      rm "$state_dir/prezto/repo-created"
+    fi
+    rmdir "$state_dir/prezto"
+  fi
+
+  # Restore dotfiles after GitHub and Prezto rollback, before undoing 1Password.
   if [[ -d "$state_dir/dotfiles" ]]; then
     local snapshot name
     for snapshot in "$state_dir"/dotfiles/file-*; do

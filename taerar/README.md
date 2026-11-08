@@ -18,7 +18,8 @@ It runs the provisioning script from `master`, creates `~/code` if needed,
 clones this repository into `~/code/homelab` over HTTPS if missing, and installs
 Homebrew and Ansible if needed, then uses Ansible to install 1Password for Mac and
 1Password for Safari, then run `make install-dotfiles` through Ansible to copy
-dotfiles into `~/`. Next it installs GitHub CLI, opens browser login, switches
+dotfiles into `~/`. It installs Prezto and Powerlevel10k using the shared Linux/macOS
+role, then installs GitHub CLI, opens browser login, switches
 origin to SSH, and installs missing tools used by the root Makefile targets.
 Use `undo-provision.sh --keep '{"gh":"preferences","1password":"app"}'` to retain
 GitHub authentication and 1Password apps between test runs. See [the provisioning documentation](ansible/README.md) for
