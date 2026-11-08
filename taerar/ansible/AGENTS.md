@@ -81,6 +81,14 @@
   above Create new computer / Restore existing computer menu choices, including
   with --unattended. Abort/Escape stops. Do not enter or modify sparsebundles;
   keep the action as an in-memory Ansible fact until later steps are specified.
+- Create opens a second menu with the same computer/version list and the
+  subtypes new computer / new version of existing computer. Continue accepts;
+  Back returns to the parent to correct the choice; Abort/Escape stops. Abort
+  is the default on both screens. Keep Restore documented as TODO until its
+  actual implementation is requested; do not restore or alter backups yet.
+- Use one reusable computer_menu() renderer for inventory dialogs and the shared
+  Python format_computers() formatter for list text. Show bullet points, one
+  computer per line and tab-indented version bullets; do not duplicate rendering.
 - Record changes in `~/.homelab-provision-state` outside the checkout. Track only
   resources created or modified by provisioning; preserve pre-existing resources.
   Record intent before operations that can partially fail and keep markers until

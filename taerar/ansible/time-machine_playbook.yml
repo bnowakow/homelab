@@ -15,16 +15,56 @@
       register: time_machine_inventory
       changed_when: false
 
-    - name: Ask whether to create a new computer or restore an existing computer
+    - name: Choose the Time Machine action and optional create subtype
       ansible.builtin.shell: |
-        dialog --clear --stdout --no-collapse --cr-wrap --tab-len 4 \
-          --title 'Time Machine computers' \
-          --ok-label 'Select' --cancel-label 'Abort' --default-button cancel \
-          --menu "Computers on the Time Machine share:\n\n$COMPUTER_LIST\n\nChoose what you want to do:" \
-          0 0 2 \
-          1 'Create a new computer (new computer or new version of existing computer)' \
-          2 'Restore existing computer' \
-          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+        set -euo pipefail
+        # One renderer keeps the inventory, layout and buttons consistent.
+        computer_menu() {
+          local title=$1 prompt=$2 allow_back=$3 message
+          shift 3
+          local options=(--clear --stdout --no-collapse --cr-wrap --tab-len 4
+            --title "$title" --ok-label 'Continue' --cancel-label 'Abort'
+            --default-button cancel --default-item 1)
+          if [[ "$allow_back" == true ]]; then
+            options+=(--extra-button --extra-label 'Back')
+          fi
+          printf -v message 'Computers on the Time Machine share:\n\n%s\n\n%s' "$COMPUTER_LIST" "$prompt"
+          dialog "${options[@]}" --menu "$message" 0 0 "$(( $# / 2 ))" "$@" \
+            < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+        }
+        while true; do
+          if action=$(computer_menu 'Time Machine computers' 'Choose what you want to do:' false \
+            1 'Create a new computer (new computer or new version of existing computer)' \
+            2 "Restore existing computer (doesn't create a new version of existing computer)"); then
+            :
+          else
+            exit "$?"
+          fi
+          case "$action" in
+            2) printf '%s\n' '{"action":"restore","create_type":null}'; exit 0 ;;
+            1) ;;
+            *) echo 'Invalid Time Machine action.' >&2; exit 2 ;;
+          esac
+          if create_type=$(computer_menu 'Create a new computer' 'Choose the type of new computer:' true \
+            1 'New computer (not existing in the list above)' \
+            2 'New version of existing computer (exists in the list above)'); then
+            status=0
+          else
+            status=$?
+          fi
+          case "$status" in
+            3) continue ;; # Back returns to the previous menu, not to Abort.
+            0) ;;
+            *) exit "$status" ;;
+          esac
+          case "$create_type" in
+            1) printf '%s\n' '{"action":"create","create_type":"new_computer"}'; exit 0 ;;
+            2) printf '%s\n' '{"action":"create","create_type":"new_version"}'; exit 0 ;;
+            *) echo 'Invalid create subtype.' >&2; exit 2 ;;
+          esac
+        done
+      args:
+        executable: /bin/bash
       environment:
         COMPUTER_LIST: "{{ (time_machine_inventory.stdout | from_json).display }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
@@ -32,12 +72,24 @@
       register: time_machine_selection
       changed_when: false
 
-    - name: Validate the selected action
+    - name: Validate the selected action and create subtype
       ansible.builtin.assert:
-        that: time_machine_selection.stdout | trim in ['1', '2']
-        fail_msg: No valid Time Machine action was selected.
+        that:
+          - (time_machine_selection.stdout | from_json).action in ['create', 'restore']
+          - >-
+            ((time_machine_selection.stdout | from_json).action == 'create' and
+             (time_machine_selection.stdout | from_json).create_type in ['new_computer', 'new_version']) or
+            ((time_machine_selection.stdout | from_json).action == 'restore' and
+             (time_machine_selection.stdout | from_json).create_type == none)
+        fail_msg: No valid Time Machine action/create subtype was selected.
 
     - name: Keep the selection available for subsequent setup steps
       ansible.builtin.set_fact:
-        time_machine_action: "{{ 'create' if time_machine_selection.stdout | trim == '1' else 'restore' }}"
+        time_machine_action: "{{ (time_machine_selection.stdout | from_json).action }}"
+        time_machine_create_type: "{{ (time_machine_selection.stdout | from_json).create_type }}"
         time_machine_computers: "{{ (time_machine_inventory.stdout | from_json).computers }}"
+
+    - name: Explain that restoring an existing computer is not implemented yet
+      ansible.builtin.debug:
+        msg: 'TODO: Restore existing computer will be implemented later. No restore has been performed.'
+      when: time_machine_action == 'restore'

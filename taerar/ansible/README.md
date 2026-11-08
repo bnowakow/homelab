@@ -288,22 +288,40 @@ alongside the versions.
 
 The dialog shows the complete computer/version list above these options:
 
-Computer names appear one per line with no bullets. Each version is on its own
-tab-indented line beneath its computer, for example:
+The reusable `computer_menu()` function renders the inventory identically on
+both screens. Computer names and versions have bullets, with each version on its
+own tab-indented line beneath its computer, for example:
 
 ```text
-Jakku
-Taerar
-	7.5
+- Jakku
+- Taerar
+	- 7.5
 ```
 
 1. Create a new computer (new computer or new version of existing computer).
-2. Restore existing computer.
+2. Restore existing computer (doesn't create a new version of existing computer)
+   (**TODO: implement later**).
 
 Abort is the default button; Enter without changing focus aborts. Abort/Escape
 stops provisioning; this manual choice is also required with
 `--unattended`. An absent or unreadable share stops with connection instructions.
-The chosen mode (`create` or `restore`) and inventory are held as Ansible facts
-for subsequent tasks in this playbook. This step does not create computers,
+Choosing **Create a new computer** opens a second dialog with the same computer
+and version list, followed by:
+
+1. New computer (not existing in the list above).
+2. New version of existing computer (exists in the list above).
+
+Its buttons are **Continue**, **Abort**, and **Back**. Back returns to the first
+screen so the previous choice can be corrected. Abort remains the default on
+both screens; Escape also aborts. The parent selection remains on Create when
+returning, but the Abort button still has default focus.
+
+**TODO: Restore existing computer will be implemented later.** The first use
+will be a subtype of Create. Selecting Restore currently only displays a TODO
+notice; it does not perform a restore.
+
+The selected mode (`time_machine_action`: `create` or `restore`), create subtype
+(`time_machine_create_type`: `new_computer`, `new_version`, or null for restore),
+and inventory are held as Ansible facts for subsequent tasks in this playbook. This step does not create computers,
 restore data, modify backup bundles, or persist a selection, so undo has nothing
 to reverse. Actual create/restore steps will be added separately.

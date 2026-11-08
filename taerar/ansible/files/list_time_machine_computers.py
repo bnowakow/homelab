@@ -34,10 +34,10 @@ def display_name(value):
 def format_computers(computers):
     lines = []
     for computer in computers:
-        lines.append(display_name(computer["name"]))
+        lines.append("- " + display_name(computer["name"]))
         if computer["versions"] and computer["unversioned"]:
-            lines.append("\t(unversioned)")
-        lines.extend("\t" + version for version in computer["versions"])
+            lines.append("\t- (unversioned)")
+        lines.extend("\t- " + version for version in computer["versions"])
     return "\n".join(lines) if lines else "(No .sparsebundle directories found.)"
 
 
