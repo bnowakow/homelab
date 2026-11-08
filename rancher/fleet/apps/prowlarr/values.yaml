@@ -1,25 +1,23 @@
 persistence:
   config:
     existingClaim: prowlarr-config-longhorn-rwo
-
 metrics:
   main:
     enabled: false
-
 ingress:
   main:
     enabled: true
     primary: true
     ingressClassName: traefik
     hosts:
-      - host: prowlarr.rancher.tailscale.bnowakowski.pl
-        paths:
-          - path: /
-            pathType: Prefix
-      - host: prowlarr.rancher.localdomain.bnowakowski.pl
-        paths:
-          - path: /
-            pathType: Prefix
+    - host: prowlarr.rancher.tailscale.bnowakowski.pl
+      paths:
+      - path: /
+        pathType: Prefix
+    - host: prowlarr.rancher.localdomain.bnowakowski.pl
+      paths:
+      - path: /
+        pathType: Prefix
     integrations:
       certManager:
         enabled: true
@@ -27,11 +25,15 @@ ingress:
       traefik:
         enabled: true
         entrypoints:
-          - websecure
+        - websecure
         forceTLS: true
-
-# One instance owns the SQLite databases.
 workload:
   main:
     replicas: 1
     strategy: Recreate
+    podSpec:
+      containers:
+        main:
+          env:
+            PROWLARR__SERVER__TRUSTEDNETWORKS: 10.42.0.0/24,10.42.2.0/24
+            PROWLARR__AUTH__REQUIRED: Enabled

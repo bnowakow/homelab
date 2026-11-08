@@ -20,6 +20,9 @@ ingress:
     enabled: true
     primary: true
     ingressClassName: traefik
+    annotations:
+      # Jenkins requires login for the root page; probe its public login page.
+      helm-upgrade.bnowakowski.pl/check-path: /login
     hosts:
     - host: jenkins.rancher.tailscale.bnowakowski.pl
       paths:

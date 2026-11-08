@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/ddclient
-  version: 15.0.6
+  version: 15.1.0
   releaseName: ddclient
   waitForJobs: true
   valuesFiles:

@@ -148,7 +148,7 @@ usage() {
 Usage: $(basename "$0") [--yes] [--dry-run] [--rollout-timeout DURATION] [--help]
 
 Options:
-  --yes       Auto-approve upgrades and continue prompts.
+  --yes       Auto-approve upgrades and continue prompts; HTTP repairs still ask.
   --dry-run   Do not apply Fleet changes; execute checks and prompts only.
   --rollout-timeout DURATION
               Timeout for each rollout status check (default: 10m).
@@ -2157,6 +2157,65 @@ EOF_ROLLOUT
   return 0
 }
 
+# Diagnose known failures without writes, then ask separately from upgrade approval.
+# Repairs always require confirmation, including in --yes mode.
+maybe_repair_http_precheck() {
+  local app="$1" namespace="$2"
+  local repair_helper="$script_dir/lib/helm-http-repair.py"
+  local repair_fleet_file repair_values repair_dir repair_plan repair_description
+  local repair_version repair_status
+  [ "$dry_run" -eq 0 ] || return 1
+  case "$app" in radarr|prowlarr|sonarr|jenkins) ;; *) return 1 ;; esac
+  [ -f "$repair_helper" ] && [ -x /usr/bin/python3 ] || return 1
+  repair_fleet_file="$(fleet_file_for_app "$app" 2>/dev/null)" || return 1
+  repair_values="$(dirname "$repair_fleet_file")/values.yaml"
+  [ -f "$repair_values" ] || return 1
+  repair_dir="$(mktemp -d "$log_dir/http-repair-${app}-XXXXXX")" || return 1
+  chmod 700 "$repair_dir"
+  repair_plan="$repair_dir/plan.json"
+  if ! repair_description="$(/usr/bin/python3 "$repair_helper" \
+      --app "$app" --namespace "$namespace" --values "$repair_values" \
+      --kubeconfig "$kubeconfig_path" --plan "$repair_plan" 2>>"$log_file")"; then
+    log "$app: HTTP repair diagnosis did not identify a supported repair"
+    return 1
+  fi
+  repair_version="$(fleet_version_from_file "$repair_fleet_file")"
+  if ! dialog --clear --begin 2 10 --defaultno \
+      --title "Repair HTTP precheck ($app)?" \
+      --yes-label "Apply repair" --no-label "Skip repair" \
+      --yesno "$repair_description\n\nBack up and update:\n$repair_values\n\nApply only this Fleet bundle at configured chart version $repair_version, then validate its rollout and HTTPS checks. Values will be staged only after validation. Backups and the repair plan are under:\n$repair_dir\n\nApply this repair?" 25 114; then
+    log "$app: user declined HTTP precheck repair"
+    return 1
+  fi
+  log "$app: user approved HTTP precheck repair; plan=$repair_plan"
+  if ! /usr/bin/python3 "$repair_helper" --apply "$repair_plan" >>"$log_file" 2>&1; then
+    record_failure_and_maybe_abort "HTTP repair failed ($app)" \
+      "Unable to update values safely. Inspect $log_file and $repair_dir."
+    return 2
+  fi
+  if ! apply_fleet_bundle "$app" "$(dirname "$repair_fleet_file")" "$namespace" "$repair_version"; then
+    log "$app: HTTP repair values retained for inspection; backup=$repair_dir/values-before.yaml"
+    return 2
+  fi
+  if ! check_rollout_ready "$app" "$namespace" "HTTP repair" || \
+     ! check_ingress_http_codes "$app" "$namespace" "HTTP repair"; then
+    record_failure_and_maybe_abort "HTTP repair validation failed ($app)" \
+      "Repair applied, but rollout/HTTP validation failed. Review $repair_dir and $log_file before retrying."
+    return 2
+  fi
+  if ! /usr/bin/python3 "$repair_helper" --verify "$repair_plan" \
+      --kubeconfig "$kubeconfig_path" >>"$log_file" 2>&1; then
+    record_failure_and_maybe_abort "HTTP repair verification failed ($app)" \
+      "The repair did not preserve the expected HTTPS/authentication behavior. See $log_file."
+    return 2
+  fi
+  if ! stage_fleet_file "$repair_values"; then
+    return 2
+  fi
+  log "$app: HTTP precheck repair applied, validated and staged; resuming upgrade flow"
+  return 0
+}
+
 run_prechecks() {
   local app="$1"
   local namespace="$2"
@@ -2167,6 +2226,15 @@ run_prechecks() {
   fi
 
   if ! check_ingress_http_codes "$app" "$namespace" "precheck"; then
+    local http_repair_status
+    if maybe_repair_http_precheck "$app" "$namespace"; then
+      return 0
+    else
+      http_repair_status=$?
+    fi
+    # Approved repairs report their own failures; declined/unknown cases keep
+    # the existing Continue/Abort failure flow.
+    [ "$http_repair_status" -ne 2 ] || return 1
     record_failure_and_maybe_abort "Precheck HTTP failed ($app)" "Health checks failed for $app:\n$check_summary_body"
     return 1
   fi

@@ -89,3 +89,12 @@ listed in `truecharts_apps` in `rancher/helm-repositories.sh`.
 References:
 - https://truecharts.org/charts/stable/jenkins/
 - https://www.jenkins.io/doc/book/installing/kubernetes/
+
+## Upgrade HTTP check
+
+Anonymous requests to `/` return HTTP 403 under the configured Jenkins
+permissions. Both HTTPS `/login` pages returned HTTP 200 on 7 November 2026.
+The ingress annotation `helm-upgrade.bnowakowski.pl/check-path: /login` in
+`values.yaml` directs `helm-upgrade-apps.sh` to check that public login page
+for prechecks and postchecks. Jenkins authentication and authorization remain
+unchanged; other applications continue to use their existing check paths.

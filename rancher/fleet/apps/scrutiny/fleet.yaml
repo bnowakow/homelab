@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/scrutiny
-  version: 15.1.0
+  version: 15.2.0
   releaseName: scrutiny
   waitForJobs: true
   valuesFiles:

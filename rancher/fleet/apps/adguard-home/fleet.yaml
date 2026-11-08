@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/adguard-home
-  version: 14.0.5
+  version: 14.1.0
   releaseName: adguard-home
   waitForJobs: true
   valuesFiles:

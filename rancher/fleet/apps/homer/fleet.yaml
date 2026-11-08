@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/homer
-  version: 16.0.4
+  version: 16.1.0
   releaseName: homer
   waitForJobs: true
   valuesFiles:

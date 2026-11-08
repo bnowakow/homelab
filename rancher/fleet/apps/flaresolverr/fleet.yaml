@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/flaresolverr
-  version: 18.0.4
+  version: 18.1.0
   releaseName: flaresolverr
   waitForJobs: true
   valuesFiles:

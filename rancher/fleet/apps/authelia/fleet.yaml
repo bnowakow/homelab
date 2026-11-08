@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/authelia
-  version: 34.0.10
+  version: 34.1.0
   releaseName: authelia
   waitForJobs: true
   valuesFiles:

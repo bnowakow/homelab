@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/uptime-kuma
-  version: 15.0.4
+  version: 15.1.0
   releaseName: uptime-kuma
   waitForJobs: true
   valuesFiles:

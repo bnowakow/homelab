@@ -110,3 +110,13 @@ fleet apply --kubeconfig /etc/rancher/k3s/k3s.yaml --namespace fleet-local \
   --label fleet.cattle.io/repo-name=rancher-cluster \
   piwigo rancher/fleet/apps/piwigo
 ```
+
+## RAM-backed temporary storage schema
+
+Chart 22.1.0 references a common schema whose built-in `persistence.tmp`
+entry does not allow `size`. Keep the built-in entry disabled and use the
+custom `persistence.photo-tmp` volume at `/tmp`: `emptyDir`, `medium: Memory`,
+`size: 1Gi`, and `targetSelectAll: true`. Custom volumes support `size`, which
+renders Kubernetes `emptyDir.sizeLimit`. Preserve RAM backing and the 1Gi
+limit so temporary photo uploads never fall back to unencrypted node storage.
+Do not remove the size cap or bypass schema validation to handle this error.

@@ -15,12 +15,16 @@ persistence:
     mountPath: /gallery
   # PHP (uploads, sessions) and nginx (request body buffers) use /tmp.
   # Keep it in RAM so uploads never touch an unencrypted disk.
+  # The built-in tmp schema does not accept a size; use a custom volume.
   tmp:
+    enabled: false
+  photo-tmp:
     enabled: true
     type: emptyDir
     medium: Memory
     size: 1Gi
     mountPath: /tmp
+    targetSelectAll: true
   # linuxserver.io runs executable files from /custom-cont-init.d at start.
   custom-init:
     enabled: true
