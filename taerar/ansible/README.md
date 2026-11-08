@@ -358,9 +358,10 @@ TODO; selecting and saving its number is supported.
 Choosing either version type opens a screen showing the selected computer and
 its versions, with two options:
 
-1. Use the proposed version: the highest existing major number plus one, with
-   minor `.0`. For `1.1`, `3.2`, and `3.4`, the proposal is `4.0`. A computer
-   with only an unversioned backup starts at `1.0`.
+1. Use the proposed version. For Major, use the highest existing major number
+   plus one with minor `.0`: `1.1`, `3.2`, and `3.4` propose `4.0`. For Minor,
+   increment the minor part of the highest existing version: `7.5` proposes `7.6`.
+   A computer with only an unversioned backup starts at `1.0`.
 2. Specify a version manually in an input dialog, prefilled with the proposal.
    Use digits, a dot, then digits: at least one digit before and after the dot
    (`^[0-9]+\.[0-9]+$`). Leading zeros are accepted; spaces, signs, letters,
@@ -372,7 +373,7 @@ its versions, with two options:
 Both screens have **Continue**, **Abort**, and **Back**. The proposal menu
 defaults to Abort; the manual-entry screen starts with focus in the input field.
 Back returns to the immediately preceding screen; returning to the version-type
-screen retains Major as the selected row. Manual entry permits an unused version
+screen retains the previously selected Minor or Major row. Manual entry permits an unused version
 other than the proposal; it need not exceed the existing maximum. The chosen
 number is held in `time_machine_version` (null for other paths or cancellation).
 No backup is created or renamed yet.

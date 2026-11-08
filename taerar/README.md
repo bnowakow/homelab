@@ -11,8 +11,10 @@ confirmations such as `Do you want to proceed with the installation? [y/n]`.
 Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
 existing sudo authorization for unattended installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
-The 1Password checks skip dialogs for verified completed setup. Incomplete or
-unverified setup still prompts, even with `--unattended`. The agent and GitHub SSH access are checked before switching origin. Undo offers a commit/ignore/exit dialog for uncommitted work.
+The 1Password checks skip dialogs for verified completed setup or explicitly
+reused saved confirmations. Unsaved incomplete or unverified setup still prompts,
+even with `--unattended`. Live agent and GitHub SSH checks still run before
+switching origin. Undo offers a commit/ignore/Abort dialog for uncommitted work.
 
 It runs the provisioning script from `master`, creates `~/code` if needed,
 clones this repository into `~/code/homelab` over HTTPS if missing, and installs
@@ -21,6 +23,15 @@ Homebrew and Ansible if needed, then uses Ansible to install 1Password for Mac a
 dotfiles into `~/`. It installs Prezto and Powerlevel10k using the shared Linux/macOS
 role, then installs GitHub CLI, opens browser login, switches
 origin to SSH, and installs missing tools used by the root Makefile targets.
+Ansible then guides Finder connection to the NAS Time Machine share and computer/
+version selection. Both minor and major paths offer suggested or manual version
+numbers; backup creation and restoration are still TODO.
+
+Accepted wizard answers are saved immediately to the Git-ignored
+`taerar/ansible/time-machine-choices.json`. Before the 1Password stage, reruns show
+an aligned, readable summary and file path, offering reuse, new choices, or Abort.
+Reuse asks only unanswered questions; selecting new choices deletes the old file.
+The summary shows the literal version number once accepted. Undo removes this file.
 Use `undo-provision.sh --keep '{"gh":"preferences","1password":"app"}'` to retain
 GitHub authentication and 1Password apps between test runs. See [the provisioning documentation](ansible/README.md) for
 details and manual prerequisites.

@@ -12,6 +12,32 @@ cleanup() {
 }
 trap cleanup EXIT
 
+
+# Retry only transient transport timeouts, never commits or authentication errors.
+git_network_with_retry() {
+	local attempt=1 max_attempts=3 status delay error_log
+	error_log=$(mktemp "${TMPDIR:-/tmp}/homelab-git-network.XXXXXX")
+	tmp_files+=("$error_log")
+	while true; do
+		if git "$@" 2>&1 | tee "$error_log"; then
+			return 0
+		else
+			status=${PIPESTATUS[0]}
+		fi
+		if ! LC_ALL=C grep -Eiq 'operation timed out|connection timed out|connection timeout|banner exchange:.*timed out' "$error_log"; then
+			return "$status"
+		fi
+		if [ "$attempt" -ge "$max_attempts" ]; then
+			printf 'Git %s still timed out after %s attempts. Check the network and GitHub SSH access. Your local commit is preserved.\n' "$1" "$max_attempts" >&2
+			return "$status"
+		fi
+		delay=$((attempt * 2))
+		printf 'Git %s timed out. Retrying in %s seconds (attempt %s/%s)...\n' "$1" "$delay" "$((attempt + 1))" "$max_attempts" >&2
+		sleep "$delay"
+		attempt=$((attempt + 1))
+	done
+}
+
 ui_fallback_explained=0
 
 # COMMIT_AGENT selects the CLI that writes commit messages and resolves pull
@@ -479,7 +505,13 @@ tmp_files+=("$agent_output")
 find_commit_skill
 commit_prompt=$(build_commit_prompt)
 
-run_agent read-only "$agent_output" "$commit_prompt" >/dev/null
+if ! run_agent read-only "$agent_output" "$commit_prompt" >/dev/null; then
+	# claude -p reports errors such as "Not logged in" on stdout, which
+	# run_agent captures, so surface it instead of exiting silently.
+	echo "$agent_label failed while generating the commit message:" >&2
+	cat "$agent_output" >&2
+	exit 1
+fi
 
 commit_message=$(extract_commit_message "$agent_output")
 if [ -z "$commit_message" ]; then
@@ -499,14 +531,14 @@ git status --short --branch
 upstream=
 if upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null); then
 	echo "Fetching $upstream before push check..."
-	git fetch --quiet
+	git_network_with_retry fetch --quiet
 	read -r ahead behind < <(git rev-list --left-right --count HEAD..."$upstream")
 
 	if [ "$behind" -gt 0 ]; then
 		if confirm "Pull before push" "Upstream $upstream has $behind commit(s) not in this branch. Run git pull --rebase before push?"; then
 			# Preserve tracked work that was intentionally left unstaged while
 			# rebasing the newly created commit onto the updated upstream.
-			if ! git pull --rebase --autostash; then
+			if ! git_network_with_retry pull --rebase --autostash; then
 				if has_unmerged_paths; then
 					resolve_pull_conflict_with_agent || {
 						echo "Aborting $script_name because the git conflict was not resolved."
@@ -549,7 +581,7 @@ while true; do
 
 	case "$push_choice" in
 		push)
-			git push
+			git_network_with_retry push
 			break
 			;;
 		diff)

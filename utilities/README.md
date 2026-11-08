@@ -90,3 +90,11 @@ Generated local files:
 - `png-to-a4-pdf/.venv` is created by `make venv` or
   `make install-requirements`.
 - `.venv` is local machine state and should not be committed.
+
+## Network timeout retries
+
+`make codex-commit` and `make claude-commit` retry Git fetch, pull and push
+transport timeouts up to three total attempts, waiting 2 seconds and then
+4 seconds. Each retry is announced. Authentication failures, rejected pushes
+and merge/rebase conflicts are not retried. Retries do not recreate the commit;
+exhausted retries leave the local commit intact and show network/SSH guidance.
