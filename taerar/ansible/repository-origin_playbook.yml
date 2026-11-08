@@ -8,17 +8,51 @@
     state_dir: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
   tasks:
     - name: Verify SSH repository access before changing origin
-      ansible.builtin.shell: |
-        if ! git ls-remote git@github.com:bnowakow/homelab.git HEAD >/dev/null; then
-          echo 'GitHub SSH access is not ready. Enable/unlock the 1Password SSH agent, configure IdentityAgent in ~/.ssh/config, and register the public key on GitHub. For an unknown host key, verify GitHub host authenticity with ssh -T git@github.com in Terminal, then rerun provisioning.' >&2
-          exit 1
-        fi
+      ansible.builtin.command:
+        argv: [git, ls-remote, 'git@github.com:bnowakow/homelab.git', HEAD]
       args:
         chdir: "{{ repo_dir }}"
       environment:
         GIT_TERMINAL_PROMPT: '0'
         GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UpdateHostKeys=no -o ConnectTimeout=15'
       changed_when: false
+      failed_when: false
+      register: github_repository_check
+
+    - name: Stop with guidance when GitHub SSH access is unavailable
+      ansible.builtin.fail:
+        msg: |
+          {% set details = github_repository_check.stderr | default('') %}
+          {% if 'timed out' in details | lower %}
+          Cannot reach GitHub over SSH: the connection timed out.
+          The connection failed before authentication, so this does not tell us whether your SSH key works.
+          Check your internet connection, VPN, firewall or network restrictions, then rerun provisioning.
+          If this network blocks port 22, GitHub supports SSH on ssh.github.com port 443:
+          https://docs.github.com/en/authentication/troubleshooting-ssh/using-ssh-over-the-https-port
+          {% elif 'Could not resolve hostname' in details %}
+          Cannot find github.com because the DNS lookup failed.
+          Check your internet connection and DNS/VPN settings, then rerun provisioning.
+          {% elif 'Connection refused' in details or 'Network is unreachable' in details %}
+          Cannot connect to GitHub over SSH.
+          Your network, firewall or VPN may be blocking the connection. Check those settings and retry.
+          {% elif 'REMOTE HOST IDENTIFICATION HAS CHANGED' in details %}
+          GitHub's SSH host key does not match the key saved on this Mac.
+          Verify the current GitHub host fingerprints before changing known_hosts. Do not disable host verification.
+          {% elif 'Host key verification failed' in details or 'host key is known' in details %}
+          GitHub's SSH server identity has not been verified on this Mac.
+          Run ssh -T git@github.com in Terminal and verify the host fingerprint, then rerun provisioning.
+          {% elif 'Permission denied (publickey)' in details %}
+          GitHub was reached, but it rejected the SSH key.
+          Unlock 1Password and approve any SSH request. Check that your key is available in its SSH agent
+          and that the matching public key is registered on the GitHub account with access to this repository.
+          {% else %}
+          Could not verify SSH access to the homelab repository.
+          Run git ls-remote git@github.com:bnowakow/homelab.git HEAD in Terminal to investigate, then retry.
+          Details: {{ details | trim or github_repository_check.msg | default('No further details available.') }}
+          {% endif %}
+          Provisioning stopped safely. The repository origin has not been changed by this run.
+          Steps completed earlier remain applied; you can rerun provisioning after resolving the issue.
+      when: github_repository_check.rc | default(1) != 0
 
     - name: Record original origin URLs and switch to SSH
       ansible.builtin.shell: |

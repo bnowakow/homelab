@@ -228,6 +228,13 @@ unchanged. If GitHub is not yet a trusted SSH host, verify its host key by runni
 `ssh -T git@github.com` in Terminal, then rerun provisioning. A valid key must be
 registered on GitHub and SSH must be configured to use the agent, as described
 in [1Password SSH setup](https://www.1password.dev/ssh/get-started).
+SSH repository check failures stop with a short, actionable explanation.
+Connection timeouts and DNS/network errors are reported separately from rejected
+keys and unverified or changed host keys. Origin remains unchanged by the failing
+run, earlier successful steps remain applied, and provisioning can be rerun after
+the issue is resolved. A port-22 timeout points to GitHub's documented SSH-over-443
+option; no network/SSH configuration is changed automatically.
+
 The checks are read-only. Undo restores the original SSH config (or removes a
 newly created file/directory when empty) in every `--keep` mode. Later SSH config
 edits are replaced by that snapshot. Existing correct configurations are left

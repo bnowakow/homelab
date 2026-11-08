@@ -66,6 +66,10 @@
   means success. Distinguish authentication, host-key, network and timeout errors;
   never tell the user to redo a verified completed step merely because Safari
   state is unknown. Keep the later repository-specific SSH access check too.
+- Repository SSH failures must stop before origin changes and show plain-language
+  guidance. Distinguish network failures from key rejection and host verification;
+  do not blame credentials before authentication. Explain that earlier steps
+  remain applied and provisioning can be rerun after resolving the failure.
 - Before any rollback, check the checkout for staged, unstaged and untracked
   files. If dirty, show a dialog offering stage-all + make codex-commit (then
   recheck), ignore and proceed, or exit without rollback. Default to Exit; treat
