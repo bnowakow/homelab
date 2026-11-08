@@ -1,0 +1,115 @@
+- name: Install Claude and Codex desktop apps and CLIs, then sign in to each
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Install missing desktop apps and CLIs and record rollback manifests
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        if [[ "$UNATTENDED" != true ]]; then unset HOMEBREW_NO_ASK; fi
+        installed_casks=$(brew list --cask)
+        has_cask() { [[ $'\n'"$installed_casks"$'\n' == *$'\n'"$1"$'\n'* ]]; }
+        app_present() { [[ -d "/Applications/$1.app" || -d "$HOME/Applications/$1.app" ]]; }
+        first_executable() {
+          local candidate
+          for candidate in "$@"; do
+            if [[ -n "$candidate" && -x "$candidate" ]]; then printf '%s' "$candidate"; return 0; fi
+          done
+          return 1
+        }
+        find_claude() {
+          first_executable "$(command -v claude || true)" "$HOME/.local/bin/claude" \
+            "$HOME/.claude/local/claude" /opt/homebrew/bin/claude /usr/local/bin/claude
+        }
+        # A Codex desktop app bundles its CLI; the ChatGPT app bundles one too.
+        find_codex() {
+          first_executable "$(command -v codex || true)" /opt/homebrew/bin/codex /usr/local/bin/codex \
+            /Applications/Codex.app/Contents/Resources/codex \
+            "$HOME/Applications/Codex.app/Contents/Resources/codex" \
+            /Applications/Codex.app/Contents/Resources/codex-cli/bin/codex \
+            /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex
+        }
+        # Record intent (casks and their missing dependencies) before installing,
+        # merged with earlier runs, so interrupted installs stay reversible.
+        install_casks() {
+          local dependencies
+          dependencies=$(brew deps --missing --cask "$@")
+          {
+            if [[ -f "$STATE_DIR/ai-tools-casks" ]]; then cat "$STATE_DIR/ai-tools-casks"; fi
+            printf '%s\n' "$@"
+          } | sed '/^$/d' | sort -u > "$STATE_DIR/ai-tools-casks.tmp"
+          mv "$STATE_DIR/ai-tools-casks.tmp" "$STATE_DIR/ai-tools-casks"
+          if [[ -n "$dependencies" ]]; then
+            {
+              if [[ -f "$STATE_DIR/ai-tools-formulae" ]]; then cat "$STATE_DIR/ai-tools-formulae"; fi
+              printf '%s\n' "$dependencies"
+            } | sed '/^$/d' | sort -u > "$STATE_DIR/ai-tools-formulae.tmp"
+            mv "$STATE_DIR/ai-tools-formulae.tmp" "$STATE_DIR/ai-tools-formulae"
+          fi
+          brew install --cask "$@" < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+          echo "installed-casks: $*"
+        }
+        # Desktop apps first: they may bundle the CLI, which then needs no cask.
+        desktops=()
+        if ! app_present Claude && ! has_cask claude; then desktops+=(claude); fi
+        if ! app_present Codex && ! has_cask codex-app; then desktops+=(codex-app); fi
+        if [[ -n "${desktops[*]-}" ]]; then install_casks "${desktops[@]}"; fi
+        clis=()
+        if ! find_claude >/dev/null; then clis+=(claude-code); fi
+        if ! find_codex >/dev/null; then clis+=(codex); fi
+        if [[ -n "${clis[*]-}" ]]; then install_casks "${clis[@]}"; fi
+        claude_cli=$(find_claude) || { echo 'The Claude Code CLI was not found after installation.' >&2; exit 1; }
+        codex_cli=$(find_codex) || { echo 'The Codex CLI was not found after installation.' >&2; exit 1; }
+        echo "claude_cli=$claude_cli"
+        echo "codex_cli=$codex_cli"
+      args:
+        executable: /bin/bash
+      environment:
+        STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
+        UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | default(false) | bool else '' }}"
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+      register: ai_tools_install
+      changed_when: "'installed-casks' in ai_tools_install.stdout"
+
+    - name: Sign-in order, one tool at a time
+      ansible.builtin.set_fact:
+        # status exits 0 only when signed in; login opens the browser flow and
+        # keeps credentials in the tool's own store (never read or saved here).
+        ai_tools:
+          - id: claude_desktop
+            name: Claude desktop app
+            kind: desktop
+            app: Claude
+          - id: claude_cli
+            name: Claude Code CLI
+            kind: cli
+            bin: "{{ ai_tools_install.stdout_lines | select('match', '^claude_cli=') | first | regex_replace('^claude_cli=', '') }}"
+            status: >-
+              "$BIN" auth status --json 2>/dev/null |
+              "$PY" -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("loggedIn") is True else 1)'
+            login: '"$BIN" auth login'
+          - id: codex_desktop
+            name: Codex desktop app
+            kind: desktop
+            app: Codex
+          - id: codex_cli
+            name: Codex CLI
+            kind: cli
+            bin: "{{ ai_tools_install.stdout_lines | select('match', '^codex_cli=') | first | regex_replace('^codex_cli=', '') }}"
+            status: 'out=$("$BIN" login status 2>&1) && [[ "$out" == "Logged in"* ]]'
+            login: '"$BIN" login'
+
+    - name: Sign in to each tool, one by one
+      ansible.builtin.include_tasks: tasks/ai-tool-signin.yml
+      loop: "{{ ai_tools }}"
+      loop_control:
+        loop_var: ai_tool
+        label: "{{ ai_tool.name }}"

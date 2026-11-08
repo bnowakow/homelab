@@ -320,7 +320,9 @@ def copy_files(files, source_root, destination, manifest, work_dir):
     for folder in (temporary, partial):
         folder.mkdir(parents=True, exist_ok=True)
     file_list = work_dir / "rsync-files"
-    file_list.write_bytes(b"".join(os.fsencode(str(relative)) + b"\0" for relative, _ in new))
+    # rsync treats --files-from entries starting with "#" or ";" as comments
+    # (even with --from0); "./" keeps names like "#notes.txt" as files.
+    file_list.write_bytes(b"".join(os.fsencode("./" + str(relative)) + b"\0" for relative, _ in new))
     # -l symlinks as links, -p permissions, -t times, -X extended attributes
     # (Finder tags, "Where from"); owners are not kept (the source Mac's IDs
     # differ). --files-from creates the listed parent folders.
@@ -335,6 +337,12 @@ def copy_files(files, source_root, destination, manifest, work_dir):
         raise CopyError(f"rsync failed (exit code {result.returncode}) after copying {copied} of "
                         f"{len(new)} new item(s). Existing files were kept; rerun provisioning to "
                         "continue.")
+    if copied != len(new):
+        # rsync can exit 0 while skipping entries; never report that as success.
+        missing_names = [str(relative) for relative, _ in new
+                         if not ((destination / relative).exists() or (destination / relative).is_symlink())]
+        raise CopyError(f"rsync finished but {len(missing_names)} of {len(new)} new item(s) were not "
+                        f"copied (e.g. {missing_names[0]}). Existing files were kept.")
     file_list.unlink()
     for folder in (temporary, partial):
         try:

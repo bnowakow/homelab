@@ -2,6 +2,7 @@
 - import_playbook: full-disk-access_playbook.yml
 - import_playbook: onepassword_playbook.yml
 - import_playbook: dotfiles_playbook.yml
+- import_playbook: ai-tools_playbook.yml
 - import_playbook: prezto_playbook.yml
 - import_playbook: github-cli_playbook.yml
 - import_playbook: repository-origin_playbook.yml

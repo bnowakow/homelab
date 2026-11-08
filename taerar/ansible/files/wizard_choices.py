@@ -57,6 +57,7 @@ def load(path):
         raise ValueError("Unsupported choices file; remove it to start over")
     answers = normalize_answers(data["answers"])
     for key in ("onepassword.signin", "onepassword.setup", "onepassword.autofill",
+                "ai_tools.claude_desktop", "ai_tools.codex_desktop",
                 "finder.time_machine_connected"):
         if key in answers and answers[key] is not True:
             raise ValueError("Invalid confirmation: " + key)
@@ -119,6 +120,8 @@ def format_summary(answers):
         "onepassword.signin": "1Password sign-in",
         "onepassword.setup": "1Password SSH agent and Safari setup",
         "onepassword.autofill": "1Password macOS AutoFill setup",
+        "ai_tools.claude_desktop": "Claude desktop app sign-in",
+        "ai_tools.codex_desktop": "Codex desktop app sign-in",
         "finder.time_machine_connected": "Finder Time Machine share connection",
         "time_machine.action": "Time Machine action",
         "time_machine.create": "Computer setup",

@@ -330,6 +330,12 @@ PY
     rmdir "$state_dir/prezto"
   fi
 
+  # Claude/Codex apps and CLIs were installed right after dotfiles. Remove only
+  # what provisioning installed; sign-ins and app data stay (like 1Password data).
+  undo_homebrew_manifest "$state_dir" ai-tools-casks cask
+  undo_homebrew_manifest "$state_dir" ai-tools-formulae formula
+  rm -f "$state_dir/ai-tools-casks.tmp" "$state_dir/ai-tools-formulae.tmp"
+
   # Restore dotfiles after GitHub and Prezto rollback, before undoing 1Password.
   if [[ -d "$state_dir/dotfiles" ]]; then
     local snapshot name
