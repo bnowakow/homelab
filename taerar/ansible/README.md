@@ -477,11 +477,18 @@ choice and does not read, copy or modify any backup.
 ### Copying ~/Downloads from the selected backup
 
 After the wizard, when a backup to copy data from was selected (not **Do not
-copy data**), `time-machine-downloads_playbook.yml` asks whether to copy
+copy data**), `time-machine-downloads-question_playbook.yml` asks whether to copy
 `~/Downloads` from the **latest** backup inside that bundle (for example
 `Taerar 7.5.sparsebundle`) into this Mac's `~/Downloads`. Abort is the default;
 the answer (`copy` or `skip`) is saved as `time_machine.downloads` and reused.
 It is cleared when any earlier Time Machine answer changes.
+
+**The copy is the very last provisioning step**, because it can take a long
+time. All the questions (this one, then the two Dia questions) are asked up front,
+right after the wizard, so you can answer them and walk away; Dia is then set up,
+and `time-machine-downloads_playbook.yml` copies `~/Downloads` at the end. If the
+question is skipped (no copy source, cancelled, or no Full Disk Access) or
+answered `skip`, the final step does nothing.
 
 `files/copy_time_machine_downloads.py` then:
 
@@ -580,7 +587,7 @@ is kept). Edited files and files that existed before are kept.
 
 ### Copying Dia settings from the selected backup
 
-After the Downloads step, when a backup to copy data from was selected and Dia
+After the Downloads question, when a backup to copy data from was selected and Dia
 is installed, `time-machine-dia_playbook.yml` asks whether to copy Dia's
 configuration from the **latest** backup in that same bundle. Abort is the
 default; the answer (`copy` or `skip`) is saved as `time_machine.dia` and is
@@ -593,22 +600,47 @@ Dia is Chromium based, so only plain settings are copied (from
 `Library/Application Support/Dia` in the home folder inside the backup, plus
 `Library/Preferences/company.thebrowser.dia.plist`):
 
-- `User Data/Local State`, `User Data/Default/Preferences` and `Secure Preferences`
-- `Bookmarks`
-- `Extensions`, `Local Extension Settings`, `Sync Extension Settings`,
-  `Managed Extension Settings`, `Extension State`, `Extension Rules`,
-  `Extension Scripts`
+- `User Data/Local State`, `User Data/Default/Preferences` and `Bookmarks`
+- `Local Extension Settings` and `Sync Extension Settings` (storage keyed by
+  extension ID, kept for when an extension is reinstalled)
 
-Not copied: history, cookies, saved logins, autofill, site data and caches, and
-Dia's own databases (tabs, skills, key-value stores). Dia's databases are
-encrypted, and an encrypted browser profile is normally tied to a key kept in the
-Mac's Keychain, so they cannot be read on another Mac; signing in to Dia syncs
-what it syncs. Because Dia creates these files on first launch, copy **before
-opening Dia**: a file Dia already created is kept, not replaced. The step
-refuses to run while Dia is running, since a browser rewrites its settings when
-it quits. Chromium protects `Secure Preferences` with integrity checks that may
-not accept a copy made on another Mac; it then resets only the protected
-settings. This has not been verified on a real second Mac.
+**Not copied, and why:**
+
+- **Extensions.** The browser keeps its list of installed extensions in
+  `Secure Preferences`, signed for the Mac that wrote it, and deletes extension
+  folders that are not on that list when it starts. Copying their folders only
+  gets them deleted (this was observed), so the extension code, `Extension
+  State/Rules/Scripts`, `Managed Extension Settings` and `Secure Preferences`
+  are left out; see the next section for reinstalling them.
+- **Tabs and spaces.** Dia keeps them in `tabs.db`, one of Dia's own databases
+  (also the skills and key-value stores), which are encrypted (their files do not
+  have a plain SQLite header). An encrypted browser profile is normally tied to a
+  key held in the Mac's Keychain, so they cannot be read on another Mac and Dia
+  resets them. Moving that key would mean handling a secret from the old Mac,
+  which provisioning does not do. If Dia syncs these for your account, signing in
+  on the new Mac is the way to get them back; this is not verified.
+- History, cookies, saved logins, autofill, site data and caches.
+
+Because Dia creates these files on first launch, copy **before opening Dia**: a
+file Dia already created is kept, not replaced. The step refuses to run while Dia
+is running, since a browser rewrites its settings when it quits.
+
+### Reinstalling Dia extensions from the backup list
+
+After the settings question, `time-machine-dia_playbook.yml` asks whether to open
+the Chrome Web Store page in Dia for each extension that was installed in Dia in
+the same backup (answer saved as `time_machine.dia_extensions`, `open` or `skip`,
+asked even when the settings copy is declined). It reads only each extension's
+`manifest.json` (and the default-language messages for a localized name) from the
+read-only snapshot; the same helper run that copies the settings reports the list,
+and declining the settings copy runs it once with `--dia-extensions` (a second
+attach). Extensions this Dia already has registered (from its `Secure
+Preferences`/`Preferences`) are skipped. For each remaining one it runs
+`open -a Dia https://chromewebstore.google.com/detail/<id>`; you choose **Add to
+Dia** on each page, and nothing is installed without your click. It needs Full
+Disk Access, and Dia may be running (only the settings copy needs it closed). Run
+again later and it opens only the ones still missing. `TEST` opens only the
+first page.
 
 `TEST` copies only `Preferences`. Copied files and created folders are recorded
 before `rsync` starts in `~/.homelab-provision-state/time-machine-dia.jsonl`

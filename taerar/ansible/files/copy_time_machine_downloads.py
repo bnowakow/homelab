@@ -10,7 +10,10 @@ macOS openrsync is never used because it cannot copy extended attributes.
 Usage: copy_time_machine_downloads.py [--dia] BUNDLE DESTINATION MANIFEST PROD|TEST
 Without --dia, copies ~/Downloads into DESTINATION (the Downloads folder). With
 --dia, copies Dia's plain configuration files from the user's home folder in
-the backup into DESTINATION (the home folder); TEST copies only Preferences.
+the backup into DESTINATION (the home folder); TEST copies only Preferences. Its
+summary also lists the extensions installed in Dia in the backup.
+       copy_time_machine_downloads.py --dia-extensions BUNDLE
+only prints that extension list (nothing is copied).
 Progress goes to stderr; a JSON summary is printed to stdout.
        copy_time_machine_downloads.py --check-access
 prints {"full_disk_access": "granted"|"missing"|"unknown", "app": NAME}.
@@ -298,25 +301,69 @@ def find_user_home(backup, user):
 
 
 # Dia (Chromium based) configuration that moves between Macs. Only plain-text
-# settings are listed: Dia's own databases and the browser's cookies, saved
-# logins and autofill data are encrypted with a key that stays on the source
-# Mac, and history, site data and caches are not configuration.
+# settings are listed: Dia's own databases (tabs, spaces, skills) and the
+# browser's cookies, saved logins and autofill data are encrypted with a key that
+# stays on the source Mac, and history, site data and caches are not
+# configuration. Extensions cannot be copied: the browser keeps the list of
+# installed extensions in "Secure Preferences", signed for the Mac that wrote it,
+# and deletes extension folders that are not on that list. Their code, state and
+# policy files and "Secure Preferences" are therefore not copied; the extensions
+# are reinstalled from the Chrome Web Store (see list_dia_extensions). Per-extension
+# storage is keyed by extension ID, so it is kept for when one is reinstalled.
 DIA_ROOT = Path("Library/Application Support/Dia")
 DIA_PLIST = Path("Library/Preferences/company.thebrowser.dia.plist")
 DIA_CONFIG = [
     "User Data/Local State",
     "User Data/Default/Preferences",
-    "User Data/Default/Secure Preferences",
     "User Data/Default/Bookmarks",
-    "User Data/Default/Extensions",
     "User Data/Default/Local Extension Settings",
     "User Data/Default/Sync Extension Settings",
-    "User Data/Default/Managed Extension Settings",
-    "User Data/Default/Extension State",
-    "User Data/Default/Extension Rules",
-    "User Data/Default/Extension Scripts",
 ]
 DIA_TEST = DIA_ROOT / "User Data/Default/Preferences"
+
+
+EXTENSION_ID = re.compile(r"[a-p]{32}")
+
+
+def clean_name(text, fallback):
+    text = "".join(character if character.isprintable() else " " for character in str(text))
+    return " ".join(text.split())[:80] or fallback
+
+
+def list_dia_extensions(home):
+    """Return [{id, name, version}] for the extensions installed in Dia in the backup.
+
+    Reads only each extension's manifest (and its default-language messages to
+    resolve a localized name) from the read-only snapshot.
+    """
+    root = home / DIA_ROOT / "User Data/Default/Extensions"
+    result = []
+    try:
+        folders = sorted(path for path in root.iterdir() if path.is_dir() and EXTENSION_ID.fullmatch(path.name))
+    except OSError:
+        return result
+    for folder in folders:
+        versions = sorted(path for path in folder.iterdir() if path.is_dir()) if folder.is_dir() else []
+        if not versions:
+            continue
+        base = versions[-1]
+        name, version = folder.name, None
+        try:
+            manifest = json.loads((base / "manifest.json").read_text(encoding="utf-8"))
+            name, version = manifest.get("name", folder.name), manifest.get("version")
+            if isinstance(name, str) and name.startswith("__MSG_") and name.endswith("__"):
+                key = name[6:-2].lower()
+                for locale in (manifest.get("default_locale"), "en", "en_US"):
+                    messages = base / "_locales" / str(locale) / "messages.json"
+                    if locale and messages.is_file():
+                        found = {k.lower(): v for k, v in json.loads(messages.read_text(encoding="utf-8")).items()}
+                        name = found.get(key, {}).get("message", name)
+                        break
+        except (OSError, ValueError, AttributeError):
+            pass
+        result.append({"id": folder.name, "name": clean_name(name, folder.name),
+                       "version": clean_name(version or "", "")})
+    return result
 
 
 def plan_dia(home, mode):
@@ -488,8 +535,10 @@ def main():
         return
     args = sys.argv[1:]
     what = "downloads"
-    if args and args[0] == "--dia":
-        what, args = "dia", args[1:]
+    if args and args[0] in ("--dia", "--dia-extensions"):
+        what, args = args[0][2:], args[1:]
+    if what == "dia-extensions":
+        args += ["-", "-", "PROD"]  # listing only: no destination, manifest or copy
     bundle, destination, manifest, mode = Path(args[0]), Path(args[1]), Path(args[2]), args[3]
     if mode not in ("PROD", "TEST"):
         raise CopyError("Environment must be PROD or TEST.")
@@ -506,6 +555,10 @@ def main():
         backup = latest_backup(mountpoint, volume, snapshot_mountpoint)
         user = os.environ.get("USER") or Path.home().name
         progress(f"Latest backup: {backup.name}")
+        if what == "dia-extensions":
+            print(json.dumps({"what": what, "backup": backup.name,
+                              "extensions": list_dia_extensions(find_user_home(backup, user))}))
+            return
         try:
             if what == "dia":
                 source = find_user_home(backup, user)
@@ -531,7 +584,9 @@ def main():
         progress(f"Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
                  f"{len(files) - new} already present will be kept...")
         copied, skipped = copy_files(files, source, destination, manifest, work_dir, backup.name)
+        extensions = list_dia_extensions(source) if what == "dia" else []
         print(json.dumps({"what": what, "backup": backup.name, "mode": mode, "copied": copied,
+                          "extensions": extensions,
                           "skipped_existing": skipped,
                           "copied_names": [str(relative) for relative, _ in files][:5]}))
     finally:

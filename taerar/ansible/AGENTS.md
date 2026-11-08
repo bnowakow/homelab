@@ -181,12 +181,22 @@
   only it read-only with noowners; ignore root-level folders without a snapshot.
   Do not use tmutil to list/mount backups (root-owned mounts, wrong owners, busy
   image). Unmount the snapshot before detaching; fall back to diskutil eject.
-- After the Downloads step, ask (saved as time_machine.dia) whether to copy Dia
+- Ask all backup questions up front, right after the wizard, and run the slow
+  ~/Downloads copy as the very last provisioning step (question in
+  time-machine-downloads-question_playbook.yml, copy in
+  time-machine-downloads_playbook.yml; the copy is skipped when the answer
+  fact is unset or skip).
+- After the Downloads question, ask (saved as time_machine.dia) whether to copy Dia
   configuration from the same selected backup. Copy only the plain settings
-  listed in DIA_CONFIG (never cookies, logins, history, caches or Dia's encrypted
-  databases), only while Dia is not running, never over existing files, in TEST
-  only Preferences. Skip when Dia is not installed. Share the Full Disk Access and
-  share-mounted conditions with Downloads: skip only when both copies are declined.
+  listed in DIA_CONFIG (never cookies, logins, history, caches, Dia's encrypted
+  databases such as tabs.db, nor extension code or Secure Preferences, which the
+  browser deletes or distrusts on another Mac), only while Dia is not running,
+  never over existing files, in TEST only Preferences. Skip when Dia is not
+  installed. Then ask (saved as time_machine.dia_extensions) whether to open the
+  Chrome Web Store page in Dia for each extension listed in the backup (read-only
+  manifests) that this Dia has not registered; the user clicks Add to Dia, TEST
+  opens one. Share the Full Disk Access and share-mounted conditions with
+  Downloads: skip only when all three backup-reading questions are declined.
 - Copy any files from Time Machine backups with Homebrew rsync 3.x (-lptX,
   --append, --files-from), never macOS openrsync or Python copies, which drop
   extended attributes. Install the rsync formula through Ansible only when a

@@ -86,6 +86,8 @@ def load(path):
         raise ValueError("Invalid Downloads copy choice")
     if answers.get("time_machine.dia", "copy") not in ["copy", "skip"]:
         raise ValueError("Invalid Dia copy choice")
+    if answers.get("time_machine.dia_extensions", "open") not in ["open", "skip"]:
+        raise ValueError("Invalid Dia extensions choice")
     return data
 
 
@@ -131,6 +133,7 @@ def format_summary(answers):
         "time_machine.copy": "Copy data from",
         "time_machine.downloads": "Copy ~/Downloads from backup",
         "time_machine.dia": "Copy Dia settings from backup",
+        "time_machine.dia_extensions": "Reinstall Dia extensions",
     }
     meanings = {"create": "Create a new computer or version", "restore": "Restore an existing computer",
                 "new_version": "New version of an existing computer", "new_computer": "Entirely new computer",
@@ -145,6 +148,8 @@ def format_summary(answers):
             rendered = source + (": " + value["version"] if value.get("version") else " (number not recorded in older file)")
         elif key == "time_machine.copy":
             rendered = copy_source_label(value)
+        elif key == "time_machine.dia_extensions":
+            rendered = "Open the Chrome Web Store pages" if value == "open" else "Do not open"
         elif key in ("time_machine.downloads", "time_machine.dia"):
             rendered = "Copy from the latest backup" if value == "copy" else "Do not copy"
         elif value is True:
@@ -196,7 +201,7 @@ def main():
         if step in order and existing != value:
             # downloads is asked after the wizard, so it depends on every step
             # but changing it does not invalidate the completed result.
-            for later in order[order.index(step) + 1:] + ["result", "number", "downloads", "dia"]:
+            for later in order[order.index(step) + 1:] + ["result", "number", "downloads", "dia", "dia_extensions"]:
                 data["answers"].pop("time_machine." + later, None)
         data["answers"][key] = value
         if key in ["time_machine.major", "time_machine.result"] and isinstance(value, dict) and value.get("version"):
