@@ -865,6 +865,43 @@ ask_attempt_fleet_repair() {
     --yesno "Helm release $namespace/$app is failed, but Fleet still has the previous deployment applied.\n\nThe old deployment should remain available. Attempt one fresh Fleet reconciliation before marking this app failed?" 18 110
 }
 
+# Repair only the two chart-label claims identified in this known failure.
+# No value or ownership mutation occurs before an explicit default-No prompt.
+repair_zabbix_chart_labels() {
+  local app="$1" namespace="$2" target_version="$3" message="$4"
+  local helper="$script_dir/lib/helm-zabbix-label-repair.py"
+  local repair_dir repair_plan description
+  [ "$app" = zabbix ] && [ "$namespace" = apps-zabbix ] || return 1
+  [ "$dry_run" -eq 0 ] || return 1
+  [ -f "$helper" ] || return 1
+  repair_dir="$(mktemp -d "$log_dir/zabbix-chart-label-repair-XXXXXX")" || return 1
+  chmod 700 "$repair_dir"
+  printf '%s\n' "$message" > "$repair_dir/failure.txt"
+  repair_plan="$repair_dir/plan.json"
+  if ! description="$(/usr/bin/python3 "$helper" --kubeconfig "$kubeconfig_path" \
+      --target-version "$target_version" --error-file "$repair_dir/failure.txt" \
+      --plan "$repair_plan" 2>>"$log_file")"; then
+    log "$app: Zabbix chart-label repair preflight rejected; see $log_file and $repair_dir"
+    return 1
+  fi
+  # Unlike general retry approval, --yes never approves this ownership repair.
+  if ! dialog --clear --begin 2 10 --defaultno \
+      --title "Repair Zabbix chart-label ownership?" \
+      --yes-label "Apply repair" --no-label "Skip repair" \
+      --yesno "$description\n\nServer dry-run checks passed. Original StatefulSet and exact metadata patch are saved under:\n$repair_dir\n\nRelease these two ownership claims and retry Fleet once?" 25 116; then
+    log "$app: user declined chart-label ownership repair; no cluster changes made"
+    return 1
+  fi
+  log "$app: user approved chart-label ownership repair; plan=$repair_plan"
+  if ! /usr/bin/python3 "$helper" --kubeconfig "$kubeconfig_path" \
+      --apply "$repair_plan" >>"$log_file" 2>&1; then
+    log "$app: chart-label ownership repair failed; inspect $repair_dir before retrying"
+    return 1
+  fi
+  log "$app: confirmed two chart-label claims released with live values unchanged; requesting existing Fleet retry flow"
+  return 0
+}
+
 # Relinquish only the self-updater's ownership on the three objects reported
 # by this known CloudCasa conflict. Preserve live values and other managers.
 repair_cloudcasa_field_ownership() {
@@ -1324,7 +1361,12 @@ apply_fleet_bundle() {
       if [ "$fleet_repair_attempted" -eq 0 ]; then
         fleet_repair_attempted=1
         local repair_approved=0
-        if [ "$app" = cloudcasa ] && [ "$namespace" = cloudcasa-io ] && \
+        if [ "$app" = zabbix ] && [ "$namespace" = apps-zabbix ] && \
+          [[ "$helm_failure_message" == *'conflict with "kubectl-patch"'* ||
+             "$helm_failure_message" == *'conflicts with "kubectl-patch"'* ]]; then
+          repair_zabbix_chart_labels "$app" "$namespace" "$target_version" \
+            "$helm_failure_message" && repair_approved=1
+        elif [ "$app" = cloudcasa ] && [ "$namespace" = cloudcasa-io ] && \
           [[ "$helm_failure_message" == *'conflict with "cloudcasa-kubeagent-manager"'* ||
              "$helm_failure_message" == *'conflicts with "cloudcasa-kubeagent-manager"'* ]]; then
           repair_cloudcasa_field_ownership && repair_approved=1
