@@ -188,10 +188,14 @@
   only Preferences. Skip when Dia is not installed. Share the Full Disk Access and
   share-mounted conditions with Downloads: skip only when both copies are declined.
 - Copy any files from Time Machine backups with Homebrew rsync 3.x (-lptX,
-  --ignore-existing, --files-from), never macOS openrsync or Python copies,
-  which drop extended attributes. Install the rsync formula through Ansible
-  only when a copy runs, tracked in time-machine-formulae for undo. Keep
-  rsync temp/partial files in the state folder, never in the destination.
+  --append, --files-from), never macOS openrsync or Python copies, which drop
+  extended attributes. Install the rsync formula through Ansible only when a
+  copy runs, tracked in time-machine-formulae for undo. Copy into a staging
+  folder in the state folder (per snapshot, same volume as the destination) and
+  move finished files into place with an atomic rename, so interrupted copies
+  resume after any kill and no partial file ever reaches the destination. Never
+  use --ignore-existing or --inplace against the destination, and never reuse
+  staged data from another snapshot.
 - Check Full Disk Access early (full-disk-access_playbook.yml, right after the
   saved-choices review) whenever the Downloads copy may still happen. Name the
   outermost .app; offer Abort (default), Open Settings (opens the Full Disk

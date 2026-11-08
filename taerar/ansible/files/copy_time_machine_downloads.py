@@ -21,6 +21,7 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -121,7 +122,13 @@ def attach(bundle, mountpoint):
             raise CopyError("hdiutil attached the backup but did not report its mounted volume.")
         return whole, devices, volume
     if b"no mountable file systems" not in result.stderr:
-        progress(result.stderr.decode(errors="replace").strip())
+        detail = " ".join(result.stderr.decode(errors="replace").split())
+        if "Resource busy" in detail:
+            raise CopyError(
+                "The backup image is already attached or in use: by Time Machine, Finder, another "
+                "provisioning run, or the Mac that owns it while it backs up. Eject it (hdiutil info "
+                "lists attached images) or wait until that finishes, then rerun provisioning.")
+        progress(detail)
         raise CopyError(ATTACH_FAILED)
     # An encrypted APFS backup stays locked here: attach without mounting,
     # unlock it with a terminal password prompt, then mount it read-only.
@@ -200,13 +207,25 @@ def latest_backup(mountpoint, volume, snapshot_mountpoint):
     tmutil is deliberately not used: it mounts every snapshot through a root
     helper, which enforces the source Mac's user IDs and keeps the image busy.
     """
-    listing = subprocess.run(["diskutil", "apfs", "listSnapshots", "-plist", volume],
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    names = []
-    if listing.returncode == 0:
-        names = [snapshot.get("SnapshotName", "")
-                 for snapshot in plistlib.loads(listing.stdout).get("Snapshots", [])]
-    dates = sorted(match.group(1) for match in map(SNAPSHOT_NAME.fullmatch, names) if match)
+    attempts = []
+    dates = []
+    for target in (volume, str(mountpoint)):
+        listing = subprocess.run(["diskutil", "apfs", "listSnapshots", "-plist", target],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        names = []
+        if listing.returncode == 0:
+            try:
+                names = [snapshot.get("SnapshotName", "")
+                         for snapshot in plistlib.loads(listing.stdout).get("Snapshots", [])]
+            except Exception:  # unparsable output is reported below, never fatal here
+                names = []
+        dates = sorted(match.group(1) for match in map(SNAPSHOT_NAME.fullmatch, names) if match)
+        note = f"{target}: exit {listing.returncode}, {len(names)} snapshot(s), {len(dates)} Time Machine backup(s)"
+        if listing.returncode != 0:
+            note += ", " + " ".join(listing.stderr.decode(errors="replace").split())[:160]
+        attempts.append(note)
+        if dates:
+            break
     if dates:
         name = f"com.apple.TimeMachine.{dates[-1]}.backup"
         # noowners: the source Mac's user IDs need not match this Mac's.
@@ -227,7 +246,12 @@ def latest_backup(mountpoint, volume, snapshot_mountpoint):
     except PermissionError as error:
         raise CopyError(FULL_DISK_ACCESS) from error
     if not backups:
-        raise CopyError("No completed backups were found in this Time Machine bundle.")
+        try:
+            root = ", ".join(sorted(path.name for path in mountpoint.iterdir())[:8]) or "empty"
+        except OSError as error:
+            root = f"unreadable ({error})"
+        raise CopyError("No completed backups were found in this Time Machine bundle ("
+                        + "; ".join(attempts) + "; volume root: " + root + ").")
     return backups[-1]
 
 
@@ -359,12 +383,39 @@ def find_rsync():
                     "Provisioning installs it; rerun provisioning or run: brew install rsync")
 
 
-def copy_files(files, source_root, destination, manifest, work_dir):
-    """Copy new files with one rsync run; never overwrite existing files.
+def staged_complete(staged, source):
+    """True when a staged file is a finished copy of its source.
 
-    Every file and missing folder is recorded in the manifest before rsync
-    starts. rsync keeps in-progress and interrupted files in work_dir (inside
-    the provisioning state folder), so no partial files appear in Downloads.
+    rsync sets the modification time only after a file is complete, so equal
+    size and time mean complete; a partial file differs in time (and size).
+    """
+    try:
+        staged_stat, source_stat = staged.lstat(), source.lstat()
+    except OSError:
+        return False
+    if stat.S_ISLNK(source_stat.st_mode):
+        return stat.S_ISLNK(staged_stat.st_mode)
+    return staged_stat.st_size == source_stat.st_size and staged_stat.st_mtime_ns == source_stat.st_mtime_ns
+
+
+def staged_size(staged):
+    try:
+        return staged.lstat().st_size
+    except OSError:
+        return 0
+
+
+def copy_files(files, source_root, destination, manifest, work_dir, snapshot_name):
+    """Copy new files in two resumable steps; never overwrite existing files.
+
+    1. rsync copies into a staging folder inside the state folder with
+       --append: after any interruption, even a crash or power loss, a rerun
+       continues each partial file after the bytes already there.
+    2. Every finished file is moved into place with an atomic rename, so no
+       half-written file ever appears in the destination.
+    Each new file and missing folder is recorded in the manifest before any data
+    is written. Staged data belongs to one snapshot (--append trusts the bytes
+    already staged), so data from an older snapshot is discarded.
     """
     new = [(relative, source) for relative, source in files
            if not ((destination / relative).exists() or (destination / relative).is_symlink())]
@@ -372,6 +423,13 @@ def copy_files(files, source_root, destination, manifest, work_dir):
     if not new:
         return 0, skipped
     rsync = find_rsync()
+    stage_root = work_dir / "stage"
+    stage = stage_root / snapshot_name
+    if stage_root.is_dir():
+        for old in stage_root.iterdir():
+            if old.name != snapshot_name:
+                shutil.rmtree(old, ignore_errors=True)
+    stage.mkdir(parents=True, exist_ok=True)
     missing = set()
     for relative, _ in new:
         parent = (destination / relative).parent
@@ -381,42 +439,45 @@ def copy_files(files, source_root, destination, manifest, work_dir):
     for folder in sorted(missing, key=lambda path: len(path.parts)):
         record(manifest, {"type": "directory", "path": str(folder)})
     for relative, source in new:
-        stat = source.lstat()
+        source_stat = source.lstat()
         record(manifest, {"type": "file", "path": str(destination / relative),
-                          "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
-    temporary, partial = work_dir / "rsync-tmp", work_dir / "rsync-partial"
-    for folder in (temporary, partial):
-        folder.mkdir(parents=True, exist_ok=True)
+                          "size": source_stat.st_size, "mtime_ns": source_stat.st_mtime_ns})
     file_list = work_dir / "rsync-files"
     # rsync treats --files-from entries starting with "#" or ";" as comments
     # (even with --from0); "./" keeps names like "#notes.txt" as files.
     file_list.write_bytes(b"".join(os.fsencode("./" + str(relative)) + b"\0" for relative, _ in new))
     # -l symlinks as links, -p permissions, -t times, -X extended attributes
     # (Finder tags, "Where from"); owners are not kept (the source Mac's IDs
-    # differ). --files-from creates the listed parent folders.
+    # differ). --files-from creates the listed parent folders in the staging area.
     result = subprocess.run(
-        [rsync, "-lptX", "--ignore-existing", "--from0", f"--files-from={file_list}",
-         f"--temp-dir={temporary}", f"--partial-dir={partial}", "--info=progress2",
-         f"{source_root}/", f"{destination}/"],
+        [rsync, "-lptX", "--append", "--from0", f"--files-from={file_list}",
+         "--info=progress2", f"{source_root}/", f"{stage}/"],
         stdout=sys.stderr, stdin=subprocess.DEVNULL)
-    copied = sum(1 for relative, _ in new if (destination / relative).exists()
-                 or (destination / relative).is_symlink())
     if result.returncode != 0:
-        raise CopyError(f"rsync failed (exit code {result.returncode}) after copying {copied} of "
-                        f"{len(new)} new item(s). Existing files were kept; rerun provisioning to "
-                        "continue.")
-    if copied != len(new):
-        # rsync can exit 0 while skipping entries; never report that as success.
-        missing_names = [str(relative) for relative, _ in new
-                         if not ((destination / relative).exists() or (destination / relative).is_symlink())]
-        raise CopyError(f"rsync finished but {len(missing_names)} of {len(new)} new item(s) were not "
-                        f"copied (e.g. {missing_names[0]}). Existing files were kept.")
-    file_list.unlink()
-    for folder in (temporary, partial):
+        done = sum(1 for relative, source in new if staged_complete(stage / relative, source))
+        raise CopyError(f"rsync failed (exit code {result.returncode}) after staging {done} of "
+                        f"{len(new)} new item(s). Nothing was moved into place that was incomplete; "
+                        "rerun provisioning to continue where it stopped.")
+    unfinished = [relative for relative, source in new if not staged_complete(stage / relative, source)]
+    if unfinished:
+        raise CopyError(f"rsync finished but {len(unfinished)} of {len(new)} new item(s) are incomplete "
+                        f"(e.g. {unfinished[0]}). Nothing incomplete was moved into place.")
+    copied = 0
+    for relative, _ in new:
+        target = destination / relative
+        staged = stage / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists() or target.is_symlink():
+            skipped += 1  # appeared meanwhile; never overwrite
+            continue
         try:
-            folder.rmdir()
-        except OSError:
-            pass
+            os.rename(staged, target)
+        except OSError as error:
+            raise CopyError(f"Could not move {relative} into place ({error}). The staging folder "
+                            f"{stage_root} must be on the same volume as the destination.") from error
+        copied += 1
+    file_list.unlink()
+    shutil.rmtree(stage_root, ignore_errors=True)
     return copied, skipped
 
 
@@ -456,7 +517,9 @@ def main():
                 files = plan_copy(source, mode)
         except PermissionError as error:
             raise CopyError(FULL_DISK_ACCESS) from error
-        needed = sum(path.lstat().st_size for relative, path in files
+        work_dir = manifest.parent / (manifest.stem + "-work")
+        stage = work_dir / "stage" / backup.name
+        needed = sum(max(0, path.lstat().st_size - staged_size(stage / relative)) for relative, path in files
                      if not ((destination / relative).exists() or (destination / relative).is_symlink()))
         destination.mkdir(parents=True, exist_ok=True)
         free = shutil.disk_usage(destination).free
@@ -467,8 +530,7 @@ def main():
                   if not ((destination / relative).exists() or (destination / relative).is_symlink()))
         progress(f"Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
                  f"{len(files) - new} already present will be kept...")
-        copied, skipped = copy_files(files, source, destination, manifest,
-                                     manifest.parent / (manifest.stem + "-work"))
+        copied, skipped = copy_files(files, source, destination, manifest, work_dir, backup.name)
         print(json.dumps({"what": what, "backup": backup.name, "mode": mode, "copied": copied,
                           "skipped_existing": skipped,
                           "copied_names": [str(relative) for relative, _ in files][:5]}))

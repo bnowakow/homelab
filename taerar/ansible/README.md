@@ -506,8 +506,9 @@ It is cleared when any earlier Time Machine answer changes.
    backed-up volume, preferring the `… - Data` volume (the snapshot holds
    `<date>.backup/<Mac> HD - Data/Users/...`). A missing folder stops with the
    user names found in the backup.
-3. Checks free space (copy size plus 1 GiB headroom), then copies the new files
-   with **Homebrew `rsync` 3.x** in one run (`rsync -lptX --ignore-existing
+3. Checks free space (copy size plus 1 GiB headroom, minus what an interrupted
+   earlier run already staged), then copies the files that do not exist yet
+   with **Homebrew `rsync` 3.x** in one run (`rsync -lptX --append
    --files-from`), never overwriting existing files. It keeps symlinks as
    links, permissions, modification times and extended attributes such as
    Finder tags and "Where from"; owners are not copied, because user IDs differ
@@ -554,10 +555,24 @@ for trying provisioning on a Mac with little free space.
 
 Every created file and folder is recorded in
 `~/.homelab-provision-state/time-machine-downloads.jsonl` **before** it is
-created, before `rsync` starts. `rsync` keeps in-progress and interrupted
-files (`--temp-dir`, `--partial-dir`) in
-`~/.homelab-provision-state/time-machine-downloads-work`, so no partial files
-appear in Downloads; a rerun continues where an interrupted copy stopped. Undo
+created, before `rsync` starts.
+
+**Interrupted copies resume.** `rsync` first copies into a staging folder,
+`~/.homelab-provision-state/time-machine-downloads-work/stage/<snapshot>`, on the
+same volume as the destination, using `--append`. When every file is complete,
+each one is moved into place with an atomic rename, so a half-written file never
+appears in Downloads. After any interruption (Ctrl-C, a closed lid, a crash, a
+lost network connection or a power loss), rerunning provisioning continues each
+partial file right after the bytes already staged and sends only the rest: a
+test that killed a 40 MB copy at 26 MB re-sent 15 MB, not 42 MB. Finished files
+are skipped, and nothing reaches the destination until the whole copy is
+complete. `--append` trusts the staged bytes, which is safe because the source is
+a read-only snapshot, so staged data belongs to one snapshot and is discarded if
+the latest backup changed between runs. (A temp folder with `--partial-dir` was
+tried first and does not survive a hard kill, and `--inplace` into the
+destination would leave truncated files that `--ignore-existing` skips.) The
+attach itself is repeated on each run and can take a couple of minutes over
+SMB. Undo
 removes copied files only when their size and modification time are
 unchanged, removes created folders only when empty, deletes that work folder,
 and then uninstalls the Homebrew `rsync` it installed (a pre-existing `rsync`
@@ -571,8 +586,8 @@ configuration from the **latest** backup in that same bundle. Abort is the
 default; the answer (`copy` or `skip`) is saved as `time_machine.dia` and is
 cleared when an earlier Time Machine answer changes. It reuses the Downloads
 machinery: Full Disk Access, the read-only snapshot mount, Homebrew `rsync`
-(installed on demand by the shared `tasks/install-rsync.yml`), and
-`--ignore-existing`, so files that already exist are never overwritten.
+(installed on demand by the shared `tasks/install-rsync.yml`), and the same
+resumable staging, so files that already exist are never overwritten.
 
 Dia is Chromium based, so only plain settings are copied (from
 `Library/Application Support/Dia` in the home folder inside the backup, plus
