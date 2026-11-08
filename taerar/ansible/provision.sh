@@ -111,6 +111,26 @@ else
 fi
 ansible-playbook --version
 
+# PROD is the default. TEST (e.g. from a local, Git-ignored .env) limits data
+# copies so provisioning can be tried on a machine with little free space.
+# An exported HOMELAB_PROVISION_ENV wins over .env. The file is parsed as
+# KEY=VALUE text and never sourced.
+env_file="$repo_dir/taerar/ansible/.env"
+if [[ -z "${HOMELAB_PROVISION_ENV:-}" && -f "$env_file" ]]; then
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    if [[ "$line" =~ ^[[:space:]]*HOMELAB_PROVISION_ENV[[:space:]]*=[[:space:]]*[\"\']?([A-Za-z]*)[\"\']?[[:space:]]*$ ]]; then
+      HOMELAB_PROVISION_ENV=${BASH_REMATCH[1]}
+    fi
+  done < "$env_file"
+fi
+provision_env=${HOMELAB_PROVISION_ENV:-PROD}
+case "$provision_env" in
+  PROD|TEST) ;;
+  *) echo "HOMELAB_PROVISION_ENV must be PROD or TEST, not '$provision_env' (check $env_file)." >&2; exit 2 ;;
+esac
+echo "Provisioning environment: $provision_env"
+
 # All subsequent provisioning actions belong in Ansible playbooks.
 # Ansible workers do not retain a controlling terminal; pass its device path
 # explicitly so confirmations and the browser device code remain visible.
@@ -124,7 +144,7 @@ fi
 export HOMELAB_PROVISION_TTY="$provision_tty"
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/terminal-ui_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
+  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\"}"
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/provision_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
+  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\"}"

@@ -164,6 +164,43 @@ PY
     retaining_onepassword=true
   fi
 
+  # Files copied into ~/Downloads from a Time Machine backup were the final step.
+  # Remove only items still unchanged since the copy; keep anything edited or
+  # replaced, and folders that are not empty. The backup itself was read-only.
+  if [[ -f "$state_dir/time-machine-downloads.jsonl" ]]; then
+    if ! python3 - "$state_dir/time-machine-downloads.jsonl" <<'PY'
+import json, os, sys
+entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+removed = kept = 0
+for entry in reversed(entries):
+    path = entry["path"]
+    if entry["type"] == "file":
+        temporary = entry.get("temporary")
+        if temporary and os.path.lexists(temporary):
+            os.unlink(temporary)
+        if not os.path.lexists(path):
+            continue
+        stat = os.lstat(path)
+        if stat.st_size == entry["size"] and stat.st_mtime_ns == entry["mtime_ns"]:
+            os.unlink(path)
+            removed += 1
+        else:
+            kept += 1
+            print("Kept modified copied file: " + path)
+    elif entry["type"] == "directory" and os.path.isdir(path) and not os.path.islink(path):
+        try:
+            os.rmdir(path)
+        except OSError:
+            print("Kept non-empty copied folder: " + path)
+print(f"Removed {removed} file(s) copied from the Time Machine backup; kept {kept} modified.")
+PY
+    then
+      echo 'Undo stopped while removing files copied into ~/Downloads. Fix the error above and rerun.' >&2
+      return 1
+    fi
+    rm "$state_dir/time-machine-downloads.jsonl"
+  fi
+
   # This stage was installed last. Remove casks before their formula dependencies.
   # Reverse the final provisioning step before removing its dependencies.
   rm -f -- "$repo_dir/taerar/ansible/time-machine-choices.json"

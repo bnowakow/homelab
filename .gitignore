@@ -30,3 +30,6 @@ tmp-sudo-password
 # Python bytecode caches
 __pycache__/
 *.py[cod]
+
+# Local provisioning environment (see taerar/ansible/.env.sample)
+/taerar/ansible/.env

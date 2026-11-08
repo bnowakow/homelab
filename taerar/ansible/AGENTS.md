@@ -90,6 +90,9 @@
   continues; Abort/Escape stops, even with --unattended. This is a manual step:
   do not silently edit Finder favorites, store NAS credentials, or snapshot the
   previous clipboard. User-created favorites/connections are preserved by undo.
+  Check the live smbfs mount at /Volumes/time-machine: show the dialog only
+  while it is unmounted and recheck after Confirm. Saved confirmations and a
+  reused completed selection must not skip it when a later step reads the share.
 - Follow Finder confirmation with a read-only scan of top-level .sparsebundle
   directories in /Volumes/time-machine. Group a trailing space plus numeric
   version under its computer; list unversioned names directly. Show the inventory
@@ -148,6 +151,17 @@
   or authentication checks; never store credentials. Future questions belong in
   a stage outside the completed-Time-Machine skip so reuse cannot hide them.
 - Label every ncurses cancellation/exit choice Abort, never Stop or Exit.
+- HOMELAB_PROVISION_ENV is PROD (default) or TEST: exported value, else the
+  Git-ignored taerar/ansible/.env (parsed as text, never sourced), else PROD.
+  Pass it to playbooks as provision_env; keep .env.sample at PROD. TEST must
+  keep data copies minimal (e.g. one file) for small test machines.
+- After the wizard, if a copy source was chosen, ask (saved as
+  time_machine.downloads) whether to copy ~/Downloads from the latest backup in
+  that bundle. Attach read-only and always detach; unlock encrypted volumes only
+  through an interactive password prompt and never store it. Never overwrite
+  existing files; check free space first. Record each created file/folder in
+  the state directory before creating it; undo removes only unchanged copies and
+  empty created folders. Explain Full Disk Access; never change privacy settings.
 - After a new version number is accepted, ask last whether to copy data from an
   existing version of the selected computer: "none" or one row per existing
   version (including unversioned). Store the semantic value in time_machine.copy

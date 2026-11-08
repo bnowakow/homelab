@@ -3,3 +3,5 @@
 - import_playbook: finder-archive_playbook.yml
 
 - import_playbook: time-machine_playbook.yml
+
+- import_playbook: time-machine-downloads_playbook.yml

@@ -129,7 +129,8 @@ Or download and run the version from `master`:
 ```
 
 Provisioning records its changes in `~/.homelab-provision-state`, including
-attempts that may fail partway through. Undo reverses them in order: remove Makefile dependency packages, restore
+attempts that may fail partway through. Undo reverses them in order: remove
+unchanged files copied into `~/Downloads` from a Time Machine backup, remove Makefile dependency packages, restore
 the original origin URLs, undo the GitHub login unless retained, remove
 the newly created Prezto checkout/runcom links, restore dotfiles, remove GitHub
 CLI and its new dependencies, remove
@@ -298,6 +299,15 @@ dialog with these manual steps:
 4. Press **+** to save the server, then **Connect** and complete any NAS login.
 5. Choose **Confirm** when done, or **Abort** to stop provisioning.
 
+The dialog appears only while the share is **not mounted** at
+`/Volumes/time-machine` (an `smbfs` mount), and Confirm rechecks: if the share
+is still missing, the dialog returns with a note (for example when Finder
+mounted it as `time-machine-1`). An already-mounted share skips the dialog. A
+saved Finder confirmation or a reused completed Time Machine selection does not
+skip it when the share is unmounted and a later step still needs it (copying
+`~/Downloads` not declined); when nothing needs the share, it is not requested.
+Abort stops with a short message.
+
 This checkpoint also waits with `--unattended`; Escape aborts. The script does
 not modify Finder favorites or store NAS credentials itself. Undo leaves the
 manually added favorite and SMB connection unchanged. The clipboard is replaced
@@ -413,6 +423,53 @@ saved source no longer exists on the share, the question is asked again.
 **TODO: copying the data is not implemented yet**; this step only records the
 choice and does not read, copy or modify any backup.
 
+### Copying ~/Downloads from the selected backup
+
+After the wizard, when a backup to copy data from was selected (not **Do not
+copy data**), `time-machine-downloads_playbook.yml` asks whether to copy
+`~/Downloads` from the **latest** backup inside that bundle (for example
+`Taerar 7.5.sparsebundle`) into this Mac's `~/Downloads`. Abort is the default;
+the answer (`copy` or `skip`) is saved as `time_machine.downloads` and reused.
+It is cleared when any earlier Time Machine answer changes.
+
+`files/copy_time_machine_downloads.py` then:
+
+1. Attaches the bundle read-only with `hdiutil` to a temporary mount point and
+   always detaches it again. If the volume is encrypted and stays locked, it
+   attaches without mounting, runs `diskutil apfs unlockVolume`, which asks for
+   the Time Machine backup password in the terminal (never stored), and mounts it
+   read-only. If Time Machine is currently using the bundle, attaching fails;
+   rerun after that backup finishes.
+2. Finds the newest backup with `tmutil listbackups -d` (or `Backups.backupdb/*/Latest`
+   for HFS+ backups) and `Users/$USER/Downloads` in its backed-up volume,
+   preferring the `… - Data` volume. A missing folder stops with the user names
+   found in the backup.
+3. Checks free space (copy size plus 1 GiB headroom), then copies without ever
+   overwriting existing files. Symlinks are copied as links; `.DS_Store`,
+   `.localized` and empty folders are skipped.
+
+**Full Disk Access is required:** macOS denies reading Time Machine backup
+contents otherwise. Enable the terminal app in **System Settings > Privacy &
+Security > Full Disk Access**, quit and reopen it, then rerun. Provisioning only
+explains this; it never changes privacy settings. The Time Machine share must
+be connected in Finder (a reused Finder confirmation does not reconnect it).
+Failures stop with the helper's message, keep saved answers, and can be rerun.
+
+**Environment:** `HOMELAB_PROVISION_ENV` selects `PROD` (default) or `TEST`.
+`PROD` copies all of `~/Downloads`. `TEST` copies only the first visible
+top-level file by name, for trying provisioning on a Mac with little free space.
+`provision.sh` reads it from an exported variable, otherwise from
+`taerar/ansible/.env` (Git-ignored), otherwise uses `PROD`. Copy
+[`.env.sample`](.env.sample) to `.env` to change it; the file is parsed as
+`KEY=VALUE` text, never sourced, and other values stop provisioning.
+
+Every created file and folder is recorded in
+`~/.homelab-provision-state/time-machine-downloads.jsonl` **before** it is
+created (files are copied to a temporary name, then renamed). Undo removes
+copied files only when their size and modification time are unchanged, removes
+interrupted temporary copies, and removes created folders only when empty;
+edited files and files that existed before are kept.
+
 **TODO:** when **New computer** is implemented, ask the same copy question,
 but first pick a computer from the share and then one of that computer's
 versions (or no copy). Only the **New version of existing computer** path asks
@@ -446,8 +503,8 @@ The manual version input retains its documented text-focus exception.
 
 Saved confirmations suppress repeat prompts; they do not bypass live readiness,
 SSH-agent, or repository-access checks, installation checks, or account login
-verification. Passwords, tokens and private keys are never saved. Finder is not
-prompted again when its confirmation is reused; the Time Machine inventory is
+verification. Passwords, tokens and private keys are never saved. Finder is
+prompted again only if the share is not actually mounted; the Time Machine inventory is
 still read if its selection is incomplete. A completed Time Machine selection
 restores its facts without rescanning or recomputing its version proposal.
 A completed selection saved before the copy question existed has no

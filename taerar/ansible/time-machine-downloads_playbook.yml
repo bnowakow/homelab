@@ -1,0 +1,121 @@
+- name: Optionally copy ~/Downloads from the selected Time Machine backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD copies all of ~/Downloads; TEST copies only its first file.
+    downloads_env: "{{ provision_env | default('PROD') }}"
+    downloads_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # Asked only after the wizard has a copy source; never for cancelled or
+    # TODO paths, and never when the user chose to start with an empty backup.
+    - name: Skip unless a backup to copy data from was selected
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_action | default('cancelled')) != 'create' or
+        (time_machine_copy_from | default(none)) in [none, 'none'] or
+        (time_machine_saved_cancelled | default(false))
+  tasks:
+    - name: Validate the provisioning environment
+      ansible.builtin.assert:
+        that: downloads_env in ['PROD', 'TEST']
+        fail_msg: HOMELAB_PROVISION_ENV must be PROD or TEST.
+
+    - name: Ask whether to copy ~/Downloads from the selected backup
+      ansible.builtin.shell: |
+        if [ "$DOWNLOADS_ENV" = TEST ]; then
+          scope='TEST environment: only the first file in Downloads is copied.'
+        else
+          scope='All of Downloads is copied.'
+        fi
+        message="Copy ~/Downloads from the latest backup in $SOURCE_NAME into this Mac's ~/Downloads?\n\n$scope Existing files are never overwritten, and the backup is only read.\n\nThe terminal running provisioning needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access) to read backup contents."
+        dialog --clear --stdout --cr-wrap --title 'Copy Downloads from backup' \
+          --ok-label Continue --cancel-label Abort --default-button cancel \
+          --menu "$message" 18 80 2 \
+          copy "Copy ~/Downloads from $SOURCE_NAME" \
+          skip 'Do not copy ~/Downloads' \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        DOWNLOADS_ENV: "{{ downloads_env }}"
+        SOURCE_NAME: "{{ downloads_source_bundle | basename | regex_replace('\\.sparsebundle$', '') }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_CANCEL: '1'
+        DIALOG_ESC: '255'
+      register: downloads_answer
+      changed_when: false
+      failed_when: false
+      when: "'time_machine.downloads' not in (provision_saved_answers | default({}))"
+
+    - name: Stop after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Copying Downloads cancelled. Nothing was copied; earlier provisioning steps remain applied.'
+             if downloads_answer.rc in [1, 255] else
+             'Could not show the Downloads dialog. Run provisioning from an interactive Terminal.' }}
+      when: not (downloads_answer.skipped | default(false)) and downloads_answer.rc != 0
+
+    - name: Decide whether to copy ~/Downloads
+      ansible.builtin.set_fact:
+        time_machine_copy_downloads: >-
+          {{ (provision_saved_answers['time_machine.downloads'] | default('skip'))
+             if (downloads_answer.skipped | default(false)) else downloads_answer.stdout }}
+
+    - name: Validate the Downloads choice
+      ansible.builtin.assert:
+        that: time_machine_copy_downloads in ['copy', 'skip']
+        fail_msg: No valid Downloads copy choice was selected.
+
+    - name: Remember the Downloads choice
+      ansible.builtin.include_tasks: tasks/save-wizard-answer.yml
+      vars:
+        wizard_answer_key: time_machine.downloads
+        wizard_answer_value: "{{ time_machine_copy_downloads }}"
+      when: not (downloads_answer.skipped | default(false))
+
+    - name: Copy ~/Downloads from the latest backup without overwriting files
+      ansible.builtin.shell: >-
+        {{ ansible_playbook_python | quote }}
+        {{ (playbook_dir + '/files/copy_time_machine_downloads.py') | quote }}
+        {{ downloads_source_bundle | quote }}
+        {{ (lookup('env', 'HOME') + '/Downloads') | quote }}
+        {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-downloads.jsonl') | quote }}
+        {{ downloads_env | quote }}
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
+      args:
+        executable: /bin/bash
+      environment:
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        PYTHONDONTWRITEBYTECODE: '1'
+      register: downloads_copy
+      # The helper prints its JSON summary only on success; its error message
+      # was already shown in the terminal above.
+      changed_when: downloads_copy.rc == 0 and (downloads_copy.stdout | from_json).copied > 0
+      failed_when: false
+      when: time_machine_copy_downloads == 'copy'
+
+    - name: Stop with a short explanation when copying failed
+      ansible.builtin.fail:
+        msg: >-
+          Copying ~/Downloads failed: {{ (downloads_copy.stderr_lines | default([]) | last)
+          | default('see the message printed above this task.', true) }}
+          The backup was only read and nothing was overwritten. Earlier steps and
+          your saved answers remain; fix the problem and rerun provisioning.
+      when: time_machine_copy_downloads == 'copy' and downloads_copy.rc != 0
+
+    - name: Report the Downloads copy
+      ansible.builtin.debug:
+        msg: >-
+          {{ downloads_env }}: copied {{ (downloads_copy.stdout | from_json).copied }} item(s) from
+          backup {{ (downloads_copy.stdout | from_json).backup }}; skipped
+          {{ (downloads_copy.stdout | from_json).skipped_existing }} existing item(s).
+          Undo removes only the copied items that are still unchanged.
+      when: time_machine_copy_downloads == 'copy'

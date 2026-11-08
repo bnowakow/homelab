@@ -82,6 +82,8 @@ def load(path):
                   answers.get("time_machine.result", {}).get("copy_from", None)]:
         if value is not None and not valid_copy_source(value):
             raise ValueError("Invalid version to copy data from")
+    if answers.get("time_machine.downloads", "copy") not in ["copy", "skip"]:
+        raise ValueError("Invalid Downloads copy choice")
     return data
 
 
@@ -125,6 +127,7 @@ def format_summary(answers):
         "time_machine.major": "Version selection",
         "time_machine.manual": "Manually entered version",
         "time_machine.copy": "Copy data from",
+        "time_machine.downloads": "Copy ~/Downloads from backup",
     }
     meanings = {"create": "Create a new computer or version", "restore": "Restore an existing computer",
                 "new_version": "New version of an existing computer", "new_computer": "Entirely new computer",
@@ -139,6 +142,8 @@ def format_summary(answers):
             rendered = source + (": " + value["version"] if value.get("version") else " (number not recorded in older file)")
         elif key == "time_machine.copy":
             rendered = copy_source_label(value)
+        elif key == "time_machine.downloads":
+            rendered = "Copy from the latest backup" if value == "copy" else "Do not copy"
         elif value is True:
             rendered = "Confirmed"
         elif isinstance(value, str):
@@ -179,8 +184,16 @@ def main():
         # Changing an earlier Time Machine answer invalidates dependent answers.
         order = ["action", "create", "computer", "version", "major", "manual", "copy"]
         step = key.removeprefix("time_machine.")
-        if step in order and data["answers"].get(key) != value:
-            for later in order[order.index(step) + 1:] + ["result", "number"]:
+        existing = data["answers"].get(key)
+        # Replaying "Specify version manually" must not discard the number that
+        # the following manual-input step saved earlier.
+        if (step == "major" and value == {"source": "manual", "version": None}
+                and isinstance(existing, dict) and existing.get("source") == "manual"):
+            value = existing
+        if step in order and existing != value:
+            # downloads is asked after the wizard, so it depends on every step
+            # but changing it does not invalidate the completed result.
+            for later in order[order.index(step) + 1:] + ["result", "number", "downloads"]:
                 data["answers"].pop("time_machine." + later, None)
         data["answers"][key] = value
         if key in ["time_machine.major", "time_machine.result"] and isinstance(value, dict) and value.get("version"):

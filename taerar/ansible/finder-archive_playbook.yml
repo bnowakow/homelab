@@ -4,32 +4,73 @@
   gather_facts: false
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
   pre_tasks:
-    - name: Skip setup when saved choices were reused or review was cancelled
+    - name: Skip setup when review was cancelled
       ansible.builtin.meta: end_play
-      when: (time_machine_reuse_choices | default(false)) or (time_machine_saved_cancelled | default(false))
+      when: time_machine_saved_cancelled | default(false)
+
+    - name: Check whether the Time Machine share is mounted
+      ansible.builtin.shell: |
+        mounts=$(mount)
+        if [[ "$mounts" == *" on $VOLUME (smbfs"* ]]; then echo mounted; else echo missing; fi
+      args:
+        executable: /bin/bash
+      environment:
+        VOLUME: "{{ time_machine_volume }}"
+      register: finder_share_state
+      changed_when: false
+
+    # A reused completed selection does not need the share unless a later step
+    # reads a backup from it (copying ~/Downloads not explicitly declined).
+    - name: Skip when the share is mounted or no remaining step needs it
+      ansible.builtin.meta: end_play
+      when: >-
+        finder_share_state.stdout == 'mounted' or
+        ((time_machine_reuse_choices | default(false)) and
+         ((time_machine_copy_from | default('none')) in [none, 'none'] or
+          (provision_saved_answers | default({})).get('time_machine.downloads') == 'skip'))
   tasks:
-    - name: Copy the archive address and wait for Finder setup confirmation
+    - name: Copy the archive address and wait until Finder has mounted the share
       ansible.builtin.shell: |
         set -euo pipefail
         address='smb://nas.localdomain.bnowakowski.pl/time-machine'
-        printf '%s' "$address" | pbcopy
-        dialog --clear --title 'Connect Finder to the Time Machine share' --defaultno \
-          --yes-label 'Confirm' --no-label 'Abort' \
-          --yesno "1. Open Finder.\n\n2. Press Cmd+K (Go > Connect to Server).\n\n3. Server address (already copied to your clipboard):\n\n$address\n\n4. Paste it with Cmd+V, press the + icon to save it, then press Connect. Complete any NAS sign-in prompt.\n\n5. Select Confirm once done, or Abort to stop provisioning." \
-          23 88 < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+        note=
+        # A saved confirmation never replaces this live check. Compare captured
+        # output: with pipefail, mount | grep -q can fail when grep exits early.
+        share_mounted() {
+          local mounts
+          mounts=$(mount)
+          [[ "$mounts" == *" on $VOLUME (smbfs"* ]]
+        }
+        while ! share_mounted; do
+          printf '%s' "$address" | pbcopy
+          dialog --clear --title 'Connect Finder to the Time Machine share' --defaultno \
+            --yes-label 'Confirm' --no-label 'Abort' \
+            --yesno "${note}1. Open Finder.\n\n2. Press Cmd+K (Go > Connect to Server).\n\n3. Server address (already copied to your clipboard):\n\n$address\n\n4. Paste it with Cmd+V, press the + icon to save it, then press Connect. Complete any NAS sign-in prompt.\n\n5. Select Confirm once done, or Abort to stop provisioning." \
+            25 88 < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+          note="The share is not mounted at $VOLUME yet. If Finder shows it under another name (e.g. time-machine-1), eject it and connect again.\n\n"
+        done
       args:
         executable: /bin/bash
       environment:
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
         TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        VOLUME: "{{ time_machine_volume }}"
       changed_when: false
-      when: not ((provision_saved_answers | default({})).get('finder.time_machine_connected', false))
+      failed_when: false
       register: finder_connection_answer
+
+    - name: Stop cleanly after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Provisioning aborted at the Finder connection step. Earlier steps and saved answers remain.'
+             if finder_connection_answer.rc in [1, 255] else
+             'Could not show the Finder connection dialog. Run provisioning from an interactive Terminal.' }}
+      when: finder_connection_answer.rc != 0
 
     - name: Remember Finder connection confirmation
       ansible.builtin.include_tasks: tasks/save-wizard-answer.yml
       vars:
         wizard_answer_key: finder.time_machine_connected
         wizard_answer_value: true
-      when: not (finder_connection_answer.skipped | default(false))
