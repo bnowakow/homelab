@@ -1066,7 +1066,8 @@ apply_fleet_bundle_with_repair() {
 
 generate_fleet_bundle() {
   local app="$1" bundle_name="$2" relative_fleet_dir="$3" output_file="$4"
-  local error_file generation_error attempt
+  local error_file generation_error attempt retry_attempt
+  local transient_pattern='connection refused|connection reset|i/o timeout|TLS handshake timeout|context deadline exceeded|temporary failure|temporary error|no such host|unexpected EOF|status[^[:digit:]]*(429|500|502|503|504)'
   error_file="$(mktemp "${TMPDIR:-/tmp}/fleet-generation.XXXXXX.log")" || return 1
   for attempt in 1 2 3; do
     if (cd "$homelab_root" && fleet apply \
@@ -1077,8 +1078,7 @@ generate_fleet_bundle() {
       return 0
     fi
     cat "$error_file" >>"$log_file"
-    if [ "$attempt" -lt 3 ] && grep -Eqi \
-      'connection refused|connection reset|i/o timeout|TLS handshake timeout|context deadline exceeded|temporary failure|temporary error|no such host|unexpected EOF|status[^[:digit:]]*(429|500|502|503|504)' "$error_file"; then
+    if [ "$attempt" -lt 3 ] && grep -Eqi "$transient_pattern" "$error_file"; then
       log "$app: transient Fleet generation failure (attempt $attempt/3); retrying in $((attempt * 2))s"
       : >"$output_file"
       sleep "$((attempt * 2))"
@@ -1086,6 +1086,36 @@ generate_fleet_bundle() {
       break
     fi
   done
+
+  # Generation is local/read-only with respect to the cluster. After the
+  # automatic retries are exhausted, ask before spending another bounded
+  # retry round on a transient registry or network failure. Never auto-approve
+  # this prompt with --yes.
+  if grep -Eqi "$transient_pattern" "$error_file" && \
+    dialog --clear --begin 2 10 --defaultno \
+      --title "Retry Fleet bundle generation ($app)?" \
+      --yes-label "Retry generation" --no-label "Stop" \
+      --yesno "Fleet could not generate bundle $bundle_name after three attempts. The last error appears transient (for example, a chart download timeout):\n\n$(tail -c 1400 "$error_file")\n\nNo cluster resources have been changed. Retry generation up to three more times?" 24 112; then
+    log "$app: user approved another bounded Fleet generation retry round"
+    for retry_attempt in 4 5 6; do
+      attempt="$retry_attempt"
+      : >"$output_file"
+      if (cd "$homelab_root" && fleet apply \
+        --kubeconfig "$kubeconfig_path" --namespace fleet-local \
+        --output "$output_file" "$bundle_name" "$relative_fleet_dir") >"$error_file" 2>&1; then
+        cat "$error_file" >>"$log_file"
+        rm -f "$error_file"
+        return 0
+      fi
+      cat "$error_file" >>"$log_file"
+      if [ "$retry_attempt" -lt 6 ] && grep -Eqi "$transient_pattern" "$error_file"; then
+        log "$app: approved Fleet generation retry failed transiently (attempt $retry_attempt/6); retrying in $((retry_attempt - 3))s"
+        sleep "$((retry_attempt - 3))"
+      else
+        break
+      fi
+    done
+  fi
   generation_error="$(tail -c 2200 "$error_file")"
   rm -f "$error_file"
   record_failure_and_maybe_abort "Fleet apply failed ($app)" \
