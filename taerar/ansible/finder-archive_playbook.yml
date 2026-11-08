@@ -1,0 +1,22 @@
+- name: Guide Finder connection to the Time Machine share
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    - name: Copy the archive address and wait for Finder setup confirmation
+      ansible.builtin.shell: |
+        set -euo pipefail
+        address='smb://nas.localdomain.bnowakowski.pl/time-machine'
+        printf '%s' "$address" | pbcopy
+        dialog --clear --title 'Connect Finder to the Time Machine share' --defaultno \
+          --yes-label 'Confirm' --no-label 'Abort' \
+          --yesno "1. Open Finder.\n\n2. Press Cmd+K (Go > Connect to Server).\n\n3. Server address (already copied to your clipboard):\n\n$address\n\n4. Paste it with Cmd+V, press the + icon to save it, then press Connect. Complete any NAS sign-in prompt.\n\n5. Select Confirm once done, or Abort to stop provisioning." \
+          23 88 < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+      args:
+        executable: /bin/bash
+      environment:
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+      changed_when: false

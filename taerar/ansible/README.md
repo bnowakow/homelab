@@ -262,3 +262,48 @@ before using their targets.
 New formulae, their missing dependencies, and new casks are recorded before
 installation. Undo removes those packages before restoring dotfiles and origin,
 preserving packages that existed beforehand. Package upgrades are not rolled back.
+
+After installing the tools, `finder-archive_playbook.yml` copies
+`smb://nas.localdomain.bnowakowski.pl/time-machine` to the clipboard and displays a
+dialog with these manual steps:
+
+1. Open Finder.
+2. Press **Cmd+K** (**Go > Connect to Server**).
+3. Paste the copied address with **Cmd+V**.
+4. Press **+** to save the server, then **Connect** and complete any NAS login.
+5. Choose **Confirm** when done, or **Abort** to stop provisioning.
+
+This checkpoint also waits with `--unattended`; Escape aborts. The script does
+not modify Finder favorites or store NAS credentials itself. Undo leaves the
+manually added favorite and SMB connection unchanged. The clipboard is replaced
+with the URL; previous clipboard contents are not stored or restored.
+
+After Finder confirmation, `time-machine_playbook.yml` scans the top-level
+`.sparsebundle` directories in `/Volumes/time-machine`, without opening bundle
+contents or following symlinks. A trailing space followed by a numeric version
+(e.g. `Taerar 7.5.sparsebundle`) groups the bundle under that computer. Names
+without that suffix (e.g. `Jakku.sparsebundle`) are unversioned. Versions sort
+numerically, so 7.10 follows 7.5. If both exist, an unversioned entry is listed
+alongside the versions.
+
+The dialog shows the complete computer/version list above these options:
+
+Computer names appear one per line with no bullets. Each version is on its own
+tab-indented line beneath its computer, for example:
+
+```text
+Jakku
+Taerar
+	7.5
+```
+
+1. Create a new computer (new computer or new version of existing computer).
+2. Restore existing computer.
+
+Abort is the default button; Enter without changing focus aborts. Abort/Escape
+stops provisioning; this manual choice is also required with
+`--unattended`. An absent or unreadable share stops with connection instructions.
+The chosen mode (`create` or `restore`) and inventory are held as Ansible facts
+for subsequent tasks in this playbook. This step does not create computers,
+restore data, modify backup bundles, or persist a selection, so undo has nothing
+to reverse. Actual create/restore steps will be added separately.

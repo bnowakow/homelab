@@ -143,3 +143,9 @@ ansible-playbook -i localhost, -c local \
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/make-dependencies_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
+ansible-playbook -i localhost, -c local \
+  "$repo_dir/taerar/ansible/finder-archive_playbook.yml" \
+  --extra-vars "{\"provision_unattended\": $unattended}"
+ansible-playbook -i localhost, -c local \
+  "$repo_dir/taerar/ansible/time-machine_playbook.yml" \
+  --extra-vars "{\"provision_unattended\": $unattended}"

@@ -133,6 +133,7 @@ PY
       fi
       if ! choice=$(TERM="${TERM:-xterm-256color}" "$dialog_bin" --clear --stdout \
         --title 'Uncommitted homelab changes' --default-item exit \
+        --cancel-label 'Abort' --default-button cancel \
         --menu 'The checkout has uncommitted or untracked files. Undo may delete this checkout. Choose what to do before any rollback begins.' \
         18 80 3 \
         commit 'Stage ALL changes and run make codex-commit, then recheck' \
@@ -439,6 +440,9 @@ PY
   if [[ "$retaining_onepassword" == false && !( "$keep_gh_preferences" == true && -d "$state_dir/gh-login" ) ]]; then
     rmdir "$state_dir"
   fi
+  # The Finder instruction dialog only copies a URL. Manual Finder favorites
+  # and SMB connections remain user-managed; no clipboard contents are saved.
+  # The Time Machine inventory/menu is read-only and its selection is in memory.
   echo 'Recorded provisioning changes have been undone.'
 }
 

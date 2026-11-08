@@ -1,5 +1,8 @@
 # Provisioning and temporary rollback
 
+- All interactive dialogs must default to Abort/Stop/Exit, never Select or
+  Continue. Use --defaultno for yes/no checkpoints and --default-button cancel
+  for menus. Require an explicit choice to proceed; keep Escape as abort.
 - Show `--unattended` in the bootstrap command at the top of `provision.sh` and
   in both `taerar/README.md` and this directory's README. The switch must select
   the installation-progressing answer for confirmation prompts using each tool's
@@ -67,6 +70,17 @@
   files. If dirty, show a dialog offering stage-all + make codex-commit (then
   recheck), ignore and proceed, or exit without rollback. Default to Exit; treat
   cancellation as Exit. If dialog/terminal is unavailable or commit fails, stop.
+- After tools are installed, show the Finder NAS Time Machine share dialog. Copy the SMB address to
+  the clipboard and show Finder/Cmd+K/paste/+/Connect instructions. Confirm
+  continues; Abort/Escape stops, even with --unattended. This is a manual step:
+  do not silently edit Finder favorites, store NAS credentials, or snapshot the
+  previous clipboard. User-created favorites/connections are preserved by undo.
+- Follow Finder confirmation with a read-only scan of top-level .sparsebundle
+  directories in /Volumes/time-machine. Group a trailing space plus numeric
+  version under its computer; list unversioned names directly. Show the inventory
+  above Create new computer / Restore existing computer menu choices, including
+  with --unattended. Abort/Escape stops. Do not enter or modify sparsebundles;
+  keep the action as an in-memory Ansible fact until later steps are specified.
 - Record changes in `~/.homelab-provision-state` outside the checkout. Track only
   resources created or modified by provisioning; preserve pre-existing resources.
   Record intent before operations that can partially fail and keep markers until
