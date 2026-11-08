@@ -455,9 +455,17 @@ It is cleared when any earlier Time Machine answer changes.
    backed-up volume, preferring the `… - Data` volume (the snapshot holds
    `<date>.backup/<Mac> HD - Data/Users/...`). A missing folder stops with the
    user names found in the backup.
-3. Checks free space (copy size plus 1 GiB headroom), then copies without ever
-   overwriting existing files. Symlinks are copied as links; `.DS_Store`,
-   `.localized` and empty folders are skipped.
+3. Checks free space (copy size plus 1 GiB headroom), then copies the new files
+   with **Homebrew `rsync` 3.x** in one run (`rsync -lptX --ignore-existing
+   --files-from`), never overwriting existing files. It keeps symlinks as
+   links, permissions, modification times and extended attributes such as
+   Finder tags and "Where from"; owners are not copied, because user IDs differ
+   between Macs. `.DS_Store`, `.localized` and empty folders are skipped.
+   macOS's own `/usr/bin/rsync` is `openrsync` (rsync 2.6.9 compatible), which
+   has no `-X` and would drop that metadata, so it is never used. Right before
+   copying, the playbook installs the `rsync` formula if it is missing and
+   records it and its new dependencies in
+   `~/.homelab-provision-state/time-machine-formulae` for undo.
 
 **Full Disk Access is required:** macOS denies reading Time Machine backup
 contents otherwise. Enable the terminal app in **System Settings > Privacy &
@@ -494,10 +502,14 @@ top-level file by name, for trying provisioning on a Mac with little free space.
 
 Every created file and folder is recorded in
 `~/.homelab-provision-state/time-machine-downloads.jsonl` **before** it is
-created (files are copied to a temporary name, then renamed). Undo removes
-copied files only when their size and modification time are unchanged, removes
-interrupted temporary copies, and removes created folders only when empty;
-edited files and files that existed before are kept.
+created, before `rsync` starts. `rsync` keeps in-progress and interrupted
+files (`--temp-dir`, `--partial-dir`) in
+`~/.homelab-provision-state/time-machine-downloads-work`, so no partial files
+appear in Downloads; a rerun continues where an interrupted copy stopped. Undo
+removes copied files only when their size and modification time are
+unchanged, removes created folders only when empty, deletes that work folder,
+and then uninstalls the Homebrew `rsync` it installed (a pre-existing `rsync`
+is kept). Edited files and files that existed before are kept.
 
 **TODO:** when **New computer** is implemented, ask the same copy question,
 but first pick a computer from the share and then one of that computer's

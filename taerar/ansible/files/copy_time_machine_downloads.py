@@ -4,6 +4,8 @@ The bundle is attached read-only and always detached again. Nothing in the
 backup is modified. Existing files in the destination are never overwritten.
 Every created file and directory is recorded in a JSON-lines manifest before it
 is created, so undo-provision.sh can remove exactly what this script added.
+Files are copied with Homebrew rsync 3.x (extended attributes included); the
+macOS openrsync is never used because it cannot copy extended attributes.
 
 Usage: copy_time_machine_downloads.py BUNDLE DESTINATION MANIFEST PROD|TEST
 Progress goes to stderr; a JSON summary is printed to stdout.
@@ -274,31 +276,71 @@ def record(manifest, entry):
         os.fsync(stream.fileno())
 
 
-def copy_files(files, destination, manifest):
-    copied = skipped = 0
-    for relative, source in files:
-        target = destination / relative
-        if target.exists() or target.is_symlink():
-            skipped += 1
+def find_rsync():
+    """Return Homebrew rsync 3.x; macOS's openrsync cannot copy xattrs (-X)."""
+    candidates = [os.environ.get("HOMELAB_RSYNC"), "/opt/homebrew/bin/rsync", "/usr/local/bin/rsync"]
+    for candidate in filter(None, candidates):
+        try:
+            result = subprocess.run([candidate, "--version"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True)
+        except OSError:
             continue
-        # Create missing parent folders, recording each before it is made.
-        missing = []
-        parent = target.parent
-        while not parent.exists():
-            missing.append(parent)
+        if result.returncode == 0 and re.match(r"rsync\s+version\s+3\.", result.stdout):
+            return candidate
+    raise CopyError("Homebrew rsync 3.x is required to copy files from backups. "
+                    "Provisioning installs it; rerun provisioning or run: brew install rsync")
+
+
+def copy_files(files, source_root, destination, manifest, work_dir):
+    """Copy new files with one rsync run; never overwrite existing files.
+
+    Every file and missing folder is recorded in the manifest before rsync
+    starts. rsync keeps in-progress and interrupted files in work_dir (inside
+    the provisioning state folder), so no partial files appear in Downloads.
+    """
+    new = [(relative, source) for relative, source in files
+           if not ((destination / relative).exists() or (destination / relative).is_symlink())]
+    skipped = len(files) - len(new)
+    if not new:
+        return 0, skipped
+    rsync = find_rsync()
+    missing = set()
+    for relative, _ in new:
+        parent = (destination / relative).parent
+        while parent != destination and not parent.exists():
+            missing.add(parent)
             parent = parent.parent
-        for folder in reversed(missing):
-            record(manifest, {"type": "directory", "path": str(folder)})
-            folder.mkdir()
-        temporary = target.with_name(".homelab-partial-" + target.name)
+    for folder in sorted(missing, key=lambda path: len(path.parts)):
+        record(manifest, {"type": "directory", "path": str(folder)})
+    for relative, source in new:
         stat = source.lstat()
-        record(manifest, {"type": "file", "path": str(target), "temporary": str(temporary),
+        record(manifest, {"type": "file", "path": str(destination / relative),
                           "size": stat.st_size, "mtime_ns": stat.st_mtime_ns})
-        if temporary.exists() or temporary.is_symlink():
-            temporary.unlink()
-        shutil.copy2(source, temporary, follow_symlinks=False)
-        os.replace(temporary, target)
-        copied += 1
+    temporary, partial = work_dir / "rsync-tmp", work_dir / "rsync-partial"
+    for folder in (temporary, partial):
+        folder.mkdir(parents=True, exist_ok=True)
+    file_list = work_dir / "rsync-files"
+    file_list.write_bytes(b"".join(os.fsencode(str(relative)) + b"\0" for relative, _ in new))
+    # -l symlinks as links, -p permissions, -t times, -X extended attributes
+    # (Finder tags, "Where from"); owners are not kept (the source Mac's IDs
+    # differ). --files-from creates the listed parent folders.
+    result = subprocess.run(
+        [rsync, "-lptX", "--ignore-existing", "--from0", f"--files-from={file_list}",
+         f"--temp-dir={temporary}", f"--partial-dir={partial}", "--info=progress2",
+         f"{source_root}/", f"{destination}/"],
+        stdout=sys.stderr, stdin=subprocess.DEVNULL)
+    copied = sum(1 for relative, _ in new if (destination / relative).exists()
+                 or (destination / relative).is_symlink())
+    if result.returncode != 0:
+        raise CopyError(f"rsync failed (exit code {result.returncode}) after copying {copied} of "
+                        f"{len(new)} new item(s). Existing files were kept; rerun provisioning to "
+                        "continue.")
+    file_list.unlink()
+    for folder in (temporary, partial):
+        try:
+            folder.rmdir()
+        except OSError:
+            pass
     return copied, skipped
 
 
@@ -338,7 +380,8 @@ def main():
                   if not ((destination / relative).exists() or (destination / relative).is_symlink()))
         progress(f"Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
                  f"{len(files) - new} already present will be kept...")
-        copied, skipped = copy_files(files, destination, manifest)
+        copied, skipped = copy_files(files, source, destination, manifest,
+                                     manifest.parent / "time-machine-downloads-work")
         print(json.dumps({"backup": backup.name, "mode": mode, "copied": copied,
                           "skipped_existing": skipped,
                           "copied_names": [str(relative) for relative, _ in files][:5]}))

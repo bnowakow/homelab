@@ -166,6 +166,11 @@
   only it read-only with noowners; ignore root-level folders without a snapshot.
   Do not use tmutil to list/mount backups (root-owned mounts, wrong owners, busy
   image). Unmount the snapshot before detaching; fall back to diskutil eject.
+- Copy any files from Time Machine backups with Homebrew rsync 3.x (-lptX,
+  --ignore-existing, --files-from), never macOS openrsync or Python copies,
+  which drop extended attributes. Install the rsync formula through Ansible
+  only when a copy runs, tracked in time-machine-formulae for undo. Keep
+  rsync temp/partial files in the state folder, never in the destination.
 - Check Full Disk Access early (full-disk-access_playbook.yml, right after the
   saved-choices review) whenever the Downloads copy may still happen. Name the
   outermost .app; offer Abort (default), Open Settings (opens the Full Disk

@@ -200,6 +200,12 @@ PY
     fi
     rm "$state_dir/time-machine-downloads.jsonl"
   fi
+  # rsync's in-progress and interrupted files never reach ~/Downloads; they
+  # live here, inside the state folder.
+  rm -rf -- "$state_dir/time-machine-downloads-work"
+  # Homebrew rsync was installed only for that copy.
+  undo_homebrew_manifest "$state_dir" time-machine-formulae formula
+  rm -f "$state_dir/time-machine-formulae.tmp"
 
   # This stage was installed last. Remove casks before their formula dependencies.
   # Reverse the final provisioning step before removing its dependencies.
