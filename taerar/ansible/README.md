@@ -344,7 +344,7 @@ After choosing a computer, the next screen shows only that computer and its
 versions, with these choices:
 
 1. New minor version (e.g. new macOS version or existing computer from scratch)
-   (**TODO: implement later**).
+   (**TODO: backup creation**).
 2. New major version (e.g. newly bought computer).
 
 Minor comes first because reinstalling or upgrading macOS is more common than
@@ -352,10 +352,10 @@ replacing the computer.
 
 Continue records the choice; Back returns to the computer picker with the
 previous computer selected. Minor is initially highlighted, while Abort remains
-the default button. The minor path currently only shows a TODO message; development
-continues with the major path for a newly bought computer.
+the default button. Both paths continue to version-number selection. Minor backup creation remains
+TODO; selecting and saving its number is supported.
 
-Choosing **New major version** opens a screen showing the selected computer and
+Choosing either version type opens a screen showing the selected computer and
 its versions, with two options:
 
 1. Use the proposed version: the highest existing major number plus one, with
@@ -425,3 +425,28 @@ a wizard). Missing new IDs must still prompt when older answers are reused.
 Place future questions after the existing wizard in a subsequent play/task stage
 rather than inside the completed-Time-Machine skip. Do not cache account login
 credentials or turn saved confirmations into proof of live readiness.
+
+Saved-choice summaries use readable question labels and descriptions rather than
+menu positions or raw button names. Choices are stored as stable semantic values
+(for example `create`, `new_version`, `major`). The version-source answer stores
+both `source` (`suggested` or `manual`) and the actual version number; a proposed
+`8.0` is displayed as **Suggested version: 8.0**. Existing numeric answers are
+mapped automatically when read. An old file that never recorded a proposed
+number is marked as such rather than inventing one.
+
+The summary also includes a separate **Version number** row for the literal
+chosen number (for example `8.0`). If the saved run has not chosen a number yet,
+it shows **Not selected yet**; the version type alone does not determine it.
+
+Both suggested and manual version acceptance atomically save the literal version
+in `answers["time_machine.number"]`, for example `"8.1"`, together with the source.
+This dedicated value drives the summary; reusing a saved suggestion retains its
+accepted number rather than recalculating it from the share.
+
+Both **New minor version** and **New major version** now require a concrete
+version number through the shared suggestion/manual screen. Minor suggests the
+highest existing version with its minor number incremented (for example `7.5`
+becomes `7.6`); major suggests the next major with `.0`. Both save the literal
+number and completed choices. Actual minor-version backup creation remains TODO.
+Reusing an older file containing only a minor/major type resumes at number
+selection; no previously unrecorded number is fabricated.

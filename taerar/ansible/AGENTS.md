@@ -112,7 +112,7 @@
   in that order because minor versions are more common.
   Reuse the shared formatter and renderer, retain Continue/Abort/Back with Abort
   default, and return Back to the computer picker preserving its selection.
-  Keep Minor documented as TODO; develop Major first for new hardware.
+  Keep minor backup creation documented as TODO; both types collect a number.
   Major proposes max(existing major numbers) + 1 with .0, or 1.0 if no numbered
   versions exist. Offer the proposal or manual major.minor entry, reject malformed
   or existing manual versions, and retain the chosen number as an Ansible fact
@@ -146,3 +146,14 @@
 
 - Display saved-answer summaries as aligned key/value columns, one answer per
   line. Use the shared format_summary() helper, including for future question IDs.
+- Store semantic wizard values, never menu positions. Keep menu-to-value mappings
+  in wizard_choices.py; summaries must use readable labels and answer meanings.
+  Save a suggested/manual version source together with its actual version number.
+  Migrate older numeric answers on read and preserve compatibility when resuming.
+- Show a separate Version number row in the saved summary, using the completed,
+  suggested, or manual number. If none was accepted, show Not selected yet.
+- Both suggested and manual version acceptance must atomically persist the
+  actual number in time_machine.number; reuse the exact accepted number.
+- Both minor and major paths must ask for a concrete version via suggestion or
+  manual input and save it. Minor suggests highest existing minor + 1; major
+  suggests highest major + 1 with .0. Minor backup creation remains TODO.
