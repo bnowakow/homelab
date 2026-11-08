@@ -10,6 +10,7 @@ cert_manager_fleet_file="$script_dir/fleet/infrastructure/cert-manager/fleet.yam
 log_dir="$script_dir/logs"
 timestamp="$(date +"%Y%m%d-%H%M%S")"
 log_file="$log_dir/upgrade-k3s-rancher-${timestamp}.log"
+metadata_cache_dir="/var/cache/homelab/upgrade-k3s-rancher"
 rancher_matrix_index_url="https://www.suse.com/suse-rancher/support-matrix/all-supported-versions/"
 rancher_matrix_current_url="https://www.suse.com/suse-rancher/support-matrix"
 rancher_chart_index_url="https://releases.rancher.com/server-charts/stable/index.yaml"
@@ -42,7 +43,9 @@ make codex-commit in the homelab repository.
 
 The script discovers current compatible versions from SUSE/GitHub, prints the
 selected versions and source URLs, attempts a pre-upgrade k3s snapshot, and then
-waits for confirmation before making upgrade changes.
+waits for confirmation before making upgrade changes. Successful public release
+metadata is cached under /var/cache/homelab/upgrade-k3s-rancher. If a live
+request fails, cached data is used only after an explicit prompt showing its age.
 
 Environment:
   ROLLOUT_TIMEOUT   kubectl rollout timeout for Rancher deployment (default: 10m)
@@ -149,7 +152,7 @@ require_cmd() {
 require_dependencies() {
   local missing=0
   local cmd
-  for cmd in awk base64 chmod chown cp curl date git grep helm hostname kubectl make mkdir mktemp mv rm sed sleep sort stat sudo systemctl tail tee tr; do
+  for cmd in awk base64 chmod chown cp curl date git grep helm hostname kubectl make mkdir mktemp mv rm sed sha256sum sleep sort stat sudo systemctl tail tee tr; do
     if ! require_cmd "$cmd"; then
       missing=1
     fi
@@ -225,8 +228,21 @@ ask_run_codex_commit() {
 confirm() {
   local prompt="$1"
   local answer
-  printf '%s [y/N] ' "$prompt"
-  read -r answer
+  if command -v dialog >/dev/null 2>&1 && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    dialog --clear --begin 2 10 --title "Confirmation required" --defaultno \
+      --yes-label "Yes" --no-label "No" --yesno "$prompt" 14 100 \
+      </dev/tty >/dev/tty 2>&1
+    return $?
+  fi
+
+  # Keep a safe interactive fallback for hosts without ncurses dialog.
+  if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+    printf '%s [y/N] ' "$prompt" >/dev/tty
+    read -r answer </dev/tty || return 1
+  else
+    log_warning "No interactive dialog or terminal is available; defaulting to No." >&2
+    return 1
+  fi
   case "$answer" in
     y|Y|yes|YES)
       return 0
@@ -237,14 +253,134 @@ confirm() {
   esac
 }
 
-fetch_url() {
+metadata_cache_key() {
+  printf '%s' "$1" | sha256sum | awk '{print $1}'
+}
+
+cache_metadata_response() {
+  local url="$1" source_file="$2" key data_file stamp_file data_tmp stamp_tmp
+  key="$(metadata_cache_key "$url")" || return 1
+  data_file="$metadata_cache_dir/$key.data"
+  stamp_file="$metadata_cache_dir/$key.timestamp"
+  data_tmp="$(mktemp "$metadata_cache_dir/.metadata.XXXXXX")" || return 1
+  stamp_tmp="${data_tmp}.timestamp"
+  if ! cp -- "$source_file" "$data_tmp"; then
+    rm -f "$data_tmp"
+    return 1
+  fi
+  chmod 600 "$data_tmp"
+  if ! printf '%s\n' "$(date +%s)" >"$stamp_tmp"; then
+    rm -f "$data_tmp" "$stamp_tmp"
+    return 1
+  fi
+  chmod 600 "$stamp_tmp"
+  mv -f -- "$data_tmp" "$data_file" && mv -f -- "$stamp_tmp" "$stamp_file"
+}
+
+use_cached_metadata_if_approved() {
+  local url="$1" key data_file stamp_file cached_at now age age_text cached_date
+  key="$(metadata_cache_key "$url")" || return 1
+  data_file="$metadata_cache_dir/$key.data"
+  stamp_file="$metadata_cache_dir/$key.timestamp"
+  if [ ! -s "$data_file" ] || [ ! -s "$stamp_file" ]; then
+    return 1
+  fi
+  cached_at="$(cat "$stamp_file" 2>/dev/null || true)"
+  now="$(date +%s)"
+  if [[ "$cached_at" =~ ^[0-9]+$ ]]; then
+    age=$((now - cached_at))
+    [ "$age" -ge 0 ] || age=0
+    age_text="$((age / 86400))d $(((age % 86400) / 3600))h ago"
+    cached_date="$(date -d "@$cached_at" '+%Y-%m-%d %H:%M:%S %Z' 2>/dev/null || printf 'unknown time')"
+  else
+    age_text="age unknown"
+    cached_date="unknown time"
+  fi
+  if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+    log_warning "Cached release metadata exists ($cached_date; $age_text), but no interactive terminal is available to approve using it." >&2
+    return 1
+  fi
+  if ! confirm "Live release data is unavailable for $url. Use cached data from $cached_date ($age_text)? It may omit newer releases."; then
+    log_warning "User declined cached release metadata for $url." >&2
+    return 1
+  fi
+  log_warning "Using user-approved cached release metadata for $url from $cached_date ($age_text)." >&2
+  cat -- "$data_file"
+}
+
+fetch_retry_approved() {
   local url="$1"
-  curl -fsSL "$url"
+  if [ ! -r /dev/tty ] || [ ! -w /dev/tty ]; then
+    log_warning "Network fetch failed for $url; no interactive terminal is available for an approved retry." >&2
+    return 1
+  fi
+  if confirm "Fetching release metadata failed for $url. Curl exhausted its configured retries. Retry this read-only request once? No upgrades have started."; then
+    return 0
+  fi
+  log_warning "User declined another fetch attempt for $url; no upgrades have started." >&2
+  return 1
+}
+
+fetch_url() {
+  local url="$1" response_file
+  response_file="$(mktemp "${TMPDIR:-/tmp}/upgrade-metadata.XXXXXX")" || return 1
+  if curl -fsSL -o "$response_file" "$url" 2>>"$log_file"; then
+    if ! cache_metadata_response "$url" "$response_file"; then
+      log_warning "Could not update metadata cache for $url." >&2
+    fi
+    cat -- "$response_file"
+    rm -f "$response_file"
+    return 0
+  fi
+  log_warning "Release metadata fetch failed for $url; curl details are in $log_file." >&2
+  if use_cached_metadata_if_approved "$url"; then
+    rm -f "$response_file"
+    return 0
+  fi
+  if fetch_retry_approved "$url"; then
+    if curl -fsSL -o "$response_file" "$url" 2>>"$log_file"; then
+      if ! cache_metadata_response "$url" "$response_file"; then
+        log_warning "Could not update metadata cache for $url." >&2
+      fi
+      cat -- "$response_file"
+      rm -f "$response_file"
+      return 0
+    fi
+  fi
+  rm -f "$response_file"
+  log_error "Release metadata is still unavailable from $url. No upgrade changes have been made; rerun after connectivity recovers." >&2
+  return 1
 }
 
 fetch_effective_url() {
-  local url="$1"
-  curl -fsSL -o /dev/null -w '%{url_effective}' "$url"
+  local url="$1" response_file
+  response_file="$(mktemp "${TMPDIR:-/tmp}/upgrade-metadata.XXXXXX")" || return 1
+  if curl -fsSL -o /dev/null -w '%{url_effective}' "$url" >"$response_file" 2>>"$log_file"; then
+    if ! cache_metadata_response "$url" "$response_file"; then
+      log_warning "Could not update metadata cache for $url." >&2
+    fi
+    cat -- "$response_file"
+    rm -f "$response_file"
+    return 0
+  fi
+  log_warning "Release metadata URL lookup failed for $url; curl details are in $log_file." >&2
+  if use_cached_metadata_if_approved "$url"; then
+    rm -f "$response_file"
+    return 0
+  fi
+  if fetch_retry_approved "$url"; then
+    if curl -fsSL -o /dev/null -w '%{url_effective}' "$url" >"$response_file" 2>>"$log_file"; then
+      if ! cache_metadata_response "$url" "$response_file"; then
+        log_warning "Could not update metadata cache for $url." >&2
+      fi
+      cat -- "$response_file"
+      rm -f "$response_file"
+      return 0
+    fi
+  fi
+  rm -f "$response_file"
+  log_error "Release metadata is still unavailable from $url. No upgrade changes have been made; rerun after connectivity recovers." >&2
+  return 1
 }
 
 strip_html_tags() {
@@ -1037,6 +1173,11 @@ main() {
 
   require_root
   mkdir -p "$log_dir"
+  if mkdir -p "$metadata_cache_dir" && chmod 700 "$metadata_cache_dir"; then
+    :
+  else
+    log_warning "Could not initialize metadata cache at $metadata_cache_dir; live lookups will still work."
+  fi
   trap ask_run_codex_commit EXIT
   require_dependencies
   export KUBECONFIG="$kubeconfig_path"
