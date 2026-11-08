@@ -388,6 +388,79 @@ def plan_dia(home, mode):
     return sorted(files.items(), key=lambda item: str(item[0]))
 
 
+def app_bundle_info(bundle):
+    """Return (bundle id, executable) from an .app's Info.plist, or (None, None)."""
+    try:
+        info = plistlib.loads((bundle / "Contents/Info.plist").read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return None, None
+    identifier = info.get("CFBundleIdentifier")
+    executable = info.get("CFBundleExecutable")
+    return (identifier if isinstance(identifier, str) else None,
+            executable if isinstance(executable, str) else None)
+
+
+def application_roots(backup_home):
+    """Application folders in the backup and their targets on this Mac."""
+    return [(backup_home.parent.parent / "Applications", Path("/Applications")),
+            (backup_home / "Applications", Path.home() / "Applications")]
+
+
+def plan_apps(catalog, backup_home, mode):
+    """Plan app bundles (from_backup, missing here) and preference plists.
+
+    Returns (bundles, plists, notes). bundles: (backup bundle folder, target
+    root, file list); plists: (relative path, source) pairs for the home folder;
+    notes: what was skipped and why.
+    """
+    apps = json.loads(Path(catalog).read_text())["apps"]
+    notes = []
+    bundles = []
+    present = {}   # app name -> (bundle id, executable) for apps on this Mac after copying
+    if mode == "PROD":
+        for app in (a for a in apps if a.get("from_backup")):
+            name = app["app"] + ".app"
+            if any((target / name).exists() for _, target in application_roots(backup_home)):
+                continue
+            for source_root, target in application_roots(backup_home):
+                folder = source_root / name
+                if folder.is_dir() and not folder.is_symlink():
+                    files = []
+                    for walked, directories, names in os.walk(folder):
+                        directories.sort()
+                        for item in sorted(names):
+                            found = Path(walked) / item
+                            files.append((found.relative_to(source_root), found))
+                    bundles.append((folder, target, files))
+                    break
+            else:
+                notes.append(f"{app['name']}: not found in the backup")
+    plists = []
+    for app in apps:
+        name = app["app"] + ".app"
+        backup_bundle = next((root / name for root, _ in application_roots(backup_home) if (root / name).is_dir()), None)
+        if backup_bundle is None:
+            continue
+        identifier, executable = app_bundle_info(backup_bundle)
+        if not identifier:
+            continue
+        here = any((target / name).exists() for _, target in application_roots(backup_home)) \
+            or any(item[0].name == name for item in bundles)
+        if not here:
+            continue
+        if executable and subprocess.run(["pgrep", "-x", executable], stdout=subprocess.DEVNULL).returncode == 0:
+            notes.append(f"{app['name']}: running, preferences not copied (quit it and rerun)")
+            continue
+        for relative in (Path("Library/Preferences") / f"{identifier}.plist",
+                         Path("Library/Containers") / identifier / "Data/Library/Preferences" / f"{identifier}.plist"):
+            path = backup_home / relative
+            if path.is_file() and not path.is_symlink():
+                plists.append((relative, path))
+    if mode == "TEST":
+        plists = sorted(plists, key=lambda item: str(item[0]))[:1]
+    return bundles, plists, notes
+
+
 def plan_copy(source, mode):
     """Return (relative path, source path) pairs of files to copy."""
     if mode == "TEST":
@@ -528,6 +601,34 @@ def copy_files(files, source_root, destination, manifest, work_dir, snapshot_nam
     return copied, skipped
 
 
+def copy_apps(catalog, backup, user, manifest, mode):
+    """Copy the from_backup app bundles and the preference plists of catalog apps."""
+    home = find_user_home(backup, user)
+    try:
+        bundles, plists, notes = plan_apps(catalog, home, mode)
+    except PermissionError as error:
+        raise CopyError(FULL_DISK_ACCESS) from error
+    base = manifest.parent / (manifest.stem + "-work")
+    copied_bundles, copied_plists, skipped = [], 0, 0
+    for folder, target, files in bundles:
+        needed = sum(path.lstat().st_size for _, path in files)
+        target.mkdir(parents=True, exist_ok=True)
+        if not os.access(target, os.W_OK):
+            raise CopyError(f"{target} is not writable by this user; copy {folder.name} manually.")
+        if needed + FREE_SPACE_MARGIN > shutil.disk_usage(target).free:
+            raise CopyError(f"Not enough free space for {folder.name} ({needed / 1024 ** 3:.1f} GiB).")
+        progress(f"Copying {folder.name} ({needed / 1024 ** 2:.0f} MiB) into {target}...")
+        done, kept = copy_files(files, folder.parent, target, manifest, base / "bundles", backup.name)
+        skipped += kept
+        copied_bundles.append(folder.name)
+    if plists:
+        progress(f"Copying {len(plists)} preference file(s) into {Path.home()}/Library...")
+        copied_plists, kept = copy_files(plists, home, Path.home(), manifest, base / "plists", backup.name)
+        skipped += kept
+    return {"what": "apps", "backup": backup.name, "mode": mode, "bundles": copied_bundles,
+            "plists": copied_plists, "skipped_existing": skipped, "notes": notes}
+
+
 def main():
     if sys.argv[1:] == ["--check-access"]:
         # Used by full-disk-access_playbook.yml early in provisioning.
@@ -535,8 +636,11 @@ def main():
         return
     args = sys.argv[1:]
     what = "downloads"
+    catalog = None
     if args and args[0] in ("--dia", "--dia-extensions"):
         what, args = args[0][2:], args[1:]
+    elif args and args[0] == "--apps":
+        what, catalog, args = "apps", args[1], args[2:]
     if what == "dia-extensions":
         args += ["-", "-", "PROD"]  # listing only: no destination, manifest or copy
     bundle, destination, manifest, mode = Path(args[0]), Path(args[1]), Path(args[2]), args[3]
@@ -558,6 +662,9 @@ def main():
         if what == "dia-extensions":
             print(json.dumps({"what": what, "backup": backup.name,
                               "extensions": list_dia_extensions(find_user_home(backup, user))}))
+            return
+        if what == "apps":
+            print(json.dumps(copy_apps(catalog, backup, user, manifest, mode)))
             return
         try:
             if what == "dia":

@@ -8,4 +8,6 @@
 - import_playbook: github-cli_playbook.yml
 - import_playbook: repository-origin_playbook.yml
 - import_playbook: make-dependencies_playbook.yml
+- import_playbook: dev-tools_playbook.yml
+- import_playbook: apps_playbook.yml
 - import_playbook: time-machine-setup_playbook.yml

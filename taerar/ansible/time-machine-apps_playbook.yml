@@ -1,0 +1,69 @@
+- name: Copy apps and their preferences from the selected Time Machine backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD copies the app bundles and preference files; TEST one preference file.
+    apps_env: "{{ provision_env | default('PROD') }}"
+    apps_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # The question was asked earlier (time-machine-apps-question_playbook.yml);
+    # this long copy runs last. The fact stays unset when the question was skipped
+    # (no copy source, cancelled, or no Full Disk Access).
+    - name: Skip unless copying apps was chosen
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_saved_cancelled | default(false)) or
+        (time_machine_copy_apps | default('skip')) != 'copy'
+  tasks:
+    - name: Install Homebrew rsync for copying files from backups
+      ansible.builtin.include_tasks: tasks/install-rsync.yml
+      when: time_machine_copy_apps == 'copy'
+
+    - name: Copy apps and preferences from the latest backup without overwriting files
+      ansible.builtin.shell: >-
+        {{ ansible_playbook_python | quote }}
+        {{ (playbook_dir + '/files/copy_time_machine_downloads.py') | quote }}
+        --apps {{ (playbook_dir + '/files/apps.json') | quote }}
+        {{ apps_source_bundle | quote }}
+        {{ lookup('env', 'HOME') | quote }}
+        {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-apps.jsonl') | quote }}
+        {{ apps_env | quote }}
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
+      args:
+        executable: /bin/bash
+      environment:
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        PYTHONDONTWRITEBYTECODE: '1'
+        HOMELAB_RSYNC: "{{ (rsync_install.stdout_lines | select('match', '^rsync=') | first)[6:] }}"
+      register: apps_copy
+      # The helper prints its JSON summary only on success; its error message
+      # was already shown in the terminal above.
+      changed_when: apps_copy.rc == 0 and ((apps_copy.stdout | from_json).bundles | length > 0 or (apps_copy.stdout | from_json).plists > 0)
+      failed_when: false
+      when: time_machine_copy_apps == 'copy'
+
+    - name: Stop with a short explanation when copying apps failed
+      ansible.builtin.fail:
+        msg: >-
+          Copying apps failed: {{ (apps_copy.stderr_lines | default([]) | last)
+          | default('see the message printed above this task.', true) }}
+          The backup was only read and nothing was overwritten. Earlier steps and
+          your saved answers remain; fix the problem and rerun provisioning.
+      when: time_machine_copy_apps == 'copy' and apps_copy.rc != 0
+
+    - name: Report the apps copy
+      vars:
+        apps_summary: "{{ apps_copy.stdout | from_json }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ apps_env }}: copied apps {{ apps_summary.bundles }} and
+          {{ apps_summary.plists }} preference file(s) from backup {{ apps_summary.backup }};
+          skipped {{ apps_summary.skipped_existing }} existing item(s). Notes: {{ apps_summary.notes }}.
+          Undo removes only the copied items that are still unchanged.
+      when: time_machine_copy_apps == 'copy'

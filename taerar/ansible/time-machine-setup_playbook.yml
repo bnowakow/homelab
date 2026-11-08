@@ -7,7 +7,11 @@
 # All questions first, so provisioning can then run without waiting for you.
 - import_playbook: time-machine-downloads-question_playbook.yml
 
+- import_playbook: time-machine-apps-question_playbook.yml
+
 - import_playbook: time-machine-dia_playbook.yml
+
+- import_playbook: time-machine-apps_playbook.yml
 
 # The slowest step comes last.
 - import_playbook: time-machine-downloads_playbook.yml

@@ -1,0 +1,95 @@
+- name: Ask whether to copy apps and their preferences from the selected backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD copies the app bundles and all preference files; TEST copies one preference file.
+    apps_env: "{{ provision_env | default('PROD') }}"
+    apps_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # Asked only after the wizard has a copy source; never for cancelled or
+    # TODO paths, and never when the user chose to start with an empty backup.
+    - name: Skip unless a backup to copy data from was selected
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_action | default('cancelled')) != 'create' or
+        (time_machine_copy_from | default(none)) in [none, 'none'] or
+        (time_machine_saved_cancelled | default(false))
+
+    # The user chose "Continue without" in full-disk-access_playbook.yml.
+    - name: Explain that apps are not copied without Full Disk Access
+      ansible.builtin.debug:
+        msg: >-
+          Skipped copying apps and preferences: {{ full_disk_access_app | default('the terminal app') }}
+          has no Full Disk Access. Enable it, quit and reopen the app, then rerun
+          provisioning to copy them. Your saved answers are unchanged.
+      when: not (provision_full_disk_access | default(true) | bool)
+
+    - name: Skip the apps copy without Full Disk Access
+      ansible.builtin.meta: end_play
+      when: not (provision_full_disk_access | default(true) | bool)
+  tasks:
+    - name: Validate the provisioning environment
+      ansible.builtin.assert:
+        that: apps_env in ['PROD', 'TEST']
+        fail_msg: HOMELAB_PROVISION_ENV must be PROD or TEST.
+
+    - name: Ask whether to copy apps and preferences from the selected backup
+      ansible.builtin.shell: |
+        if [ "$APPS_ENV" = TEST ]; then
+          scope='TEST environment: only one preference file is copied and no app is copied.'
+        else
+          scope='Copies ForkLift, Camtasia 2, OpenEmu and Transmission Remote GUI from the backup (only if missing here) and the preferences plist of every catalog app installed on this Mac.'
+        fi
+        message="Copy apps and their preferences from the latest backup in $SOURCE_NAME?\n\n$scope Existing files are never overwritten, apps that are running are skipped, and the backup is only read.\n\nThe terminal running provisioning needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access) to read backup contents."
+        dialog --clear --stdout --cr-wrap --title 'Copy apps from backup' \
+          --ok-label Continue --cancel-label Abort --default-button cancel \
+          --menu "$message" 18 80 2 \
+          copy "Copy apps and preferences from $SOURCE_NAME" \
+          skip 'Do not copy apps or preferences' \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        APPS_ENV: "{{ apps_env }}"
+        SOURCE_NAME: "{{ apps_source_bundle | basename | regex_replace('\\.sparsebundle$', '') }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_CANCEL: '1'
+        DIALOG_ESC: '255'
+      register: apps_answer
+      changed_when: false
+      failed_when: false
+      when: "'time_machine.apps' not in (provision_saved_answers | default({}))"
+
+    - name: Stop after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Copying apps cancelled. Nothing was copied; earlier provisioning steps remain applied.'
+             if apps_answer.rc in [1, 255] else
+             'Could not show the apps dialog. Run provisioning from an interactive Terminal.' }}
+      when: not (apps_answer.skipped | default(false)) and apps_answer.rc != 0
+
+    - name: Decide whether to copy apps
+      ansible.builtin.set_fact:
+        time_machine_copy_apps: >-
+          {{ (provision_saved_answers['time_machine.apps'] | default('skip'))
+             if (apps_answer.skipped | default(false)) else apps_answer.stdout }}
+
+    - name: Validate the apps choice
+      ansible.builtin.assert:
+        that: time_machine_copy_apps in ['copy', 'skip']
+        fail_msg: No valid apps copy choice was selected.
+
+    - name: Remember the apps choice
+      ansible.builtin.include_tasks: tasks/save-wizard-answer.yml
+      vars:
+        wizard_answer_key: time_machine.apps
+        wizard_answer_value: "{{ time_machine_copy_apps }}"
+      when: not (apps_answer.skipped | default(false))

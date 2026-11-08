@@ -1,0 +1,85 @@
+- name: Install developer tools with Homebrew
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    # SDKMAN (sdkman/tap) and the znotch cask (zkondor/dist) come from third-party
+    # taps; Homebrew 7 refuses untrusted taps, so only those named items are
+    # trusted. Taps, trusted items, formulae and casks are recorded before
+    # installing so undo-provision.sh can remove exactly what provisioning added.
+    - name: Install missing developer tools and record rollback manifests
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        if [[ "$UNATTENDED" != true ]]; then unset HOMEBREW_NO_ASK; fi
+        tty() { "$@" < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1; }
+        append() { { [[ -f "$2" ]] && cat "$2"; printf '%s\n' "$1"; } | sed '/^$/d' | sort -u > "$2.tmp"; mv "$2.tmp" "$2"; }
+        # name|install name|tap|kind (formula/cask)
+        items=(
+          'sdkman-cli|sdkman/tap/sdkman-cli|sdkman/tap|formula'
+          'screen|screen||formula'
+          'wget|wget||formula'
+          'curl|curl||formula'
+          'ffmpeg|ffmpeg||formula'
+          'ggshield|ggshield||formula'
+          'mole|mole||formula'
+          'mtr|mtr||formula'
+          'node|node||formula'
+          'ollama|ollama||formula'
+          'pipx|pipx||formula'
+          'pyenv|pyenv||formula'
+          'pyenv-virtualenv|pyenv-virtualenv||formula'
+          'python|python||formula'
+          'readline|readline||formula'
+          'ruby|ruby||formula'
+          'sshpass|sshpass||formula'
+          'tree|tree||formula'
+          'rar|rar||cask'
+          'znotch|zkondor/dist/znotch|zkondor/dist|cask'
+        )
+        wanted_formulae=(); wanted_casks=(); install_formulae=(); install_casks=()
+        for item in "${items[@]}"; do
+          IFS='|' read -r name install tap kind <<< "$item"
+          if brew list "--$kind" "$name" >/dev/null 2>&1; then continue; fi
+          if [[ -n "$tap" ]]; then
+            if ! brew tap | grep -qx "$tap"; then
+              append "$tap" "$STATE_DIR/dev-tools-taps"
+              tty brew tap "$tap"
+            fi
+            append "$kind $install" "$STATE_DIR/dev-tools-trusted"
+            tty brew trust "--$kind" "$install"
+          fi
+          if [[ "$kind" == formula ]]; then
+            wanted_formulae+=("$name"); install_formulae+=("$install")
+          else
+            wanted_casks+=("$name"); install_casks+=("$install")
+          fi
+        done
+        if [[ -z "${install_formulae[*]-}${install_casks[*]-}" ]]; then echo already-installed; exit 0; fi
+        if [[ -n "${install_formulae[*]-}" ]]; then
+          dependencies=$(brew deps --missing --formula "${install_formulae[@]}")
+          for entry in "${wanted_formulae[@]}" $dependencies; do append "$entry" "$STATE_DIR/dev-tools-formulae"; done
+        fi
+        if [[ -n "${install_casks[*]-}" ]]; then
+          dependencies=$(brew deps --missing --cask "${install_casks[@]}")
+          for entry in "${wanted_casks[@]}"; do append "$entry" "$STATE_DIR/dev-tools-casks"; done
+          for entry in $dependencies; do append "$entry" "$STATE_DIR/dev-tools-formulae"; done
+        fi
+        if [[ -n "${install_formulae[*]-}" ]]; then tty brew install --formula "${install_formulae[@]}"; fi
+        if [[ -n "${install_casks[*]-}" ]]; then tty brew install --cask "${install_casks[@]}"; fi
+        echo installed
+      args:
+        executable: /bin/bash
+      environment:
+        STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
+        UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | default(false) | bool else '' }}"
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+      register: dev_tools
+      changed_when: "'installed' in dev_tools.stdout_lines"

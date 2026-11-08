@@ -209,9 +209,10 @@ PY
   fi
 
   # Files copied from Time Machine backups were the final steps, in reverse order:
-  # Dia settings, then ~/Downloads.
-  undo_copied_files "$state_dir" time-machine-dia 'the Dia settings copied from a backup' || return 1
+  # ~/Downloads, then the apps and preferences, then the Dia settings.
   undo_copied_files "$state_dir" time-machine-downloads 'files copied into ~/Downloads' || return 1
+  undo_copied_files "$state_dir" time-machine-apps 'the apps and preferences copied from a backup' || return 1
+  undo_copied_files "$state_dir" time-machine-dia 'the Dia settings copied from a backup' || return 1
   # Homebrew rsync was installed only for that copy.
   undo_homebrew_manifest "$state_dir" time-machine-formulae formula
   rm -f "$state_dir/time-machine-formulae.tmp"
@@ -219,6 +220,31 @@ PY
   # This stage was installed last. Remove casks before their formula dependencies.
   # Reverse the final provisioning step before removing its dependencies.
   rm -f -- "$repo_dir/taerar/ansible/time-machine-choices.json"
+
+  # Catalog apps were installed after SDKMAN. Casks are removed; App Store apps
+  # and app data stay (uninstall them manually; the ids are in apps-mas).
+  undo_homebrew_manifest "$state_dir" apps-casks cask
+  undo_homebrew_manifest "$state_dir" apps-formulae formula
+  rm -f "$state_dir/apps-casks.tmp" "$state_dir/apps-formulae.tmp" "$state_dir/apps-mas"
+
+  # SDKMAN, screen and wget were installed after the Makefile dependencies;
+  # remove them (and the sdkman tap, if provisioning added it) first.
+  undo_homebrew_manifest "$state_dir" dev-tools-formulae formula
+  rm -f "$state_dir/dev-tools-formulae.tmp" "$state_dir/dev-tools-casks.tmp"
+  undo_homebrew_manifest "$state_dir" dev-tools-casks cask
+  if [[ -f "$state_dir/dev-tools-trusted" ]]; then
+    while read -r kind item; do
+      if [[ -z "$item" ]]; then item=$kind; kind=formula; fi
+      brew untrust "--$kind" "$item" || true
+    done < "$state_dir/dev-tools-trusted"
+    rm "$state_dir/dev-tools-trusted"
+  fi
+  if [[ -f "$state_dir/dev-tools-taps" ]]; then
+    while read -r tap; do
+      [[ -n "$tap" ]] && { brew untap "$tap" || true; }
+    done < "$state_dir/dev-tools-taps"
+    rm "$state_dir/dev-tools-taps"
+  fi
 
   undo_homebrew_manifest "$state_dir" make-dependencies-casks cask
   undo_homebrew_manifest "$state_dir" make-dependencies-formulae formula

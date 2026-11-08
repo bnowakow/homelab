@@ -1,0 +1,38 @@
+- name: Install applications from the app catalog
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    env_name: "{{ provision_env | default('PROD') }}"
+  tasks:
+    # files/apps.json lists Homebrew casks, App Store apps (via mas) and apps
+    # that must be installed by hand. In TEST nothing is installed.
+    - name: Install missing applications and record rollback manifests
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/env
+          - python3
+          - -I
+          - "{{ playbook_dir }}/files/install_apps.py"
+          - "{{ playbook_dir }}/files/apps.json"
+          - "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
+          - "{{ env_name }}"
+          - "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+      environment:
+        UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+      register: apps_install
+      failed_when: apps_install.rc != 0
+      changed_when: (apps_install.stdout_lines | last | from_json).installed | length > 0
+
+    - name: Report applications
+      vars:
+        apps_summary: "{{ apps_install.stdout_lines | last | from_json }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ env_name }}: {{ apps_summary.present }} catalog app(s) already installed;
+          {{ 'would install' if env_name == 'TEST' else 'installed' }}
+          {{ (apps_summary.casks + apps_summary.store) if env_name == 'TEST' else apps_summary.installed }};
+          failed: {{ apps_summary.failed }};
+          copied from the Time Machine backup if you accept: {{ apps_summary.from_backup }};
+          install by hand: {{ apps_summary.manual | map(attribute='name') | list }}
