@@ -15,6 +15,10 @@
       register: time_machine_inventory
       changed_when: false
 
+    - name: Order selectable computer names reverse alphabetically
+      ansible.builtin.set_fact:
+        time_machine_selectable_computers: "{{ (time_machine_inventory.stdout | from_json).computers | sort(attribute='name', case_sensitive=false, reverse=true) }}"
+
     - name: Choose the Time Machine action and optional create subtype
       ansible.builtin.shell: |
         set -euo pipefail
@@ -88,8 +92,8 @@
               ;;
             create)
               if selection=$(computer_menu 'Create a new computer' 'Choose the type of new computer:' true "$create_choice" \
-                1 'New computer (not existing in the list above)' \
-                2 'New version of existing computer (exists in the list above)'); then
+                1 'New version of existing computer (exists in the list above)' \
+                2 'New computer (not existing in the list above)'); then
                 status=0
               else
                 status=$?
@@ -102,8 +106,8 @@
               esac
               create_choice=$selection
               case "$selection" in
-                1) printf '%s\n' '{"action":"create","create_type":"new_computer","computer_index":null}'; exit 0 ;;
-                2) screen=computer ;;
+                1) screen=computer ;;
+                2) printf '%s\n' '{"action":"create","create_type":"new_computer","computer_index":null}'; exit 0 ;;
                 *) echo 'Invalid create subtype.' >&2; exit 2 ;;
               esac
               ;;
@@ -141,7 +145,7 @@
         DIALOG_CANCEL: '1'
         DIALOG_ESC: '255'
         DIALOG_EXTRA: '3'
-        COMPUTERS_JSON: "{{ (time_machine_inventory.stdout | from_json).computers | to_json }}"
+        COMPUTERS_JSON: "{{ time_machine_selectable_computers | to_json }}"
         COMPUTER_LIST: "{{ (time_machine_inventory.stdout | from_json).display }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
         TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
@@ -202,7 +206,7 @@
         time_machine_action: "{{ (time_machine_selection.stdout | from_json).action }}"
         time_machine_create_type: "{{ (time_machine_selection.stdout | from_json).create_type }}"
         time_machine_computer: >-
-          {{ (time_machine_inventory.stdout | from_json).computers[(time_machine_selection.stdout | from_json).computer_index - 1].name
+          {{ time_machine_selectable_computers[(time_machine_selection.stdout | from_json).computer_index - 1].name
              if (time_machine_selection.stdout | from_json).create_type == 'new_version' else none }}
         time_machine_computers: "{{ (time_machine_inventory.stdout | from_json).computers }}"
 

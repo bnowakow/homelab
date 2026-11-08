@@ -318,8 +318,8 @@ proceed, explicitly focus Continue. This manual choice is also required with
 Choosing **Create a new computer** opens a second dialog with the same computer
 and version list, followed by:
 
-1. New computer (not existing in the list above) (**TODO: implement later**).
-2. New version of existing computer (exists in the list above).
+1. New version of existing computer (exists in the list above).
+2. New computer (not existing in the list above) (**TODO: implement later**).
 
 Its buttons are **Continue**, **Abort**, and **Back**. Back returns to the first
 screen so the previous choice can be corrected. Abort remains the default on
@@ -332,7 +332,8 @@ notice; it does not perform a restore.
 
 Choosing **New version of existing computer** opens a third screen. The full
 computer/version list remains at the top, while selectable rows contain only
-unique computer names, for example **Jakku** and **Taerar**, without versions.
+unique computer names in reverse alphabetical order, for example **Taerar** then
+**Jakku**, without versions. The full inventory above keeps its original order.
 It uses **Continue**, **Abort**, and **Back**, defaulting to Abort. Back returns
 to the create-subtype screen with New version still selected; its own Back
 returns to the first screen. If no computers exist, you can go Back or Abort.

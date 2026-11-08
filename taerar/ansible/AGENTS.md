@@ -99,7 +99,8 @@
   computer per line and tab-indented version bullets; do not duplicate rendering.
 - Keep Restore and completely New computer documented as TODO. Develop the new
   version path first: its next screen repeats the full inventory above a menu
-  of unique computer names only (no versions). Use Continue/Abort/Back on every
+  of unique computer names only (no versions), in reverse alphabetical order.
+  Map selections using that same ordered list. Use Continue/Abort/Back on every
   subsequent wizard screen, default Abort, and Back to the immediately previous
   screen while preserving its choice. Keep selections in memory; no backup
   modifications until the corresponding implementation is requested.
