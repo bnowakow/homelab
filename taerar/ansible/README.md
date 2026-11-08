@@ -160,15 +160,24 @@ or administrator authentication even with `--unattended`.
 
 After installation, sign in to 1Password for Mac and enable **Safari > Settings >
 Extensions > 1Password for Safari**, approving website permissions as needed.
-Provisioning opens 1Password and first asks through dialog whether you have
-signed in and unlocked it. After confirmation, Ansible configures a GitHub-only
+Provisioning opens 1Password and first checks whether its SSH agent can perform
+a local sign/verify operation (`ssh-add -T`) with an offered key. This may show a
+native 1Password authorization prompt. If verified, the sign-in dialog is skipped.
+Otherwise it asks you to confirm sign-in and unlock before continuing.
+After sign-in is confirmed or verified, Ansible configures a GitHub-only
 `IdentityAgent` block in `~/.ssh/config`, unless already configured correctly.
-It snapshots the original file and permissions before editing. A second dialog asks you
+It snapshots the original file and permissions before editing. Next it checks
+agent availability, GitHub SSH access, and Safari extension enabled state. The
+second dialog appears only if at least one status is not ready or unknown. It asks you
 to enable **1Password > Settings > Developer > Use the SSH Agent**, make your SSH
 key available, register its public key on GitHub,
 and enable the Safari extension. It then checks the 1Password agent with
 `ssh-add -l` using its socket. If unavailable or empty, provisioning stops with
-instructions. Both checkpoints appear with `--unattended`; Stop/Escape aborts.
+instructions. Incomplete/unverified checkpoints still appear with `--unattended`; Stop/Escape
+aborts. Safari detection reads extension-state plists for default and discovered
+profiles. Unreadable, missing, conflicting or unrecognized state falls back to
+manual confirmation; app installation/PlugInKit registration is not proof of
+activation. No confirmation is cached as a substitute for live state.
 No app settings are changed before the sign-in confirmation. Undo removes only applications/tools installed
 by provisioning. It does not use Homebrew `--zap` or delete vault data, app
 preferences, or Apple Account purchase history. `--keep` with `"gh":"preferences"` retains

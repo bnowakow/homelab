@@ -39,18 +39,21 @@
   1password=preferences explicitly selects app removal with data retained.
 - Open 1Password after installation, recording whether provisioning launched it.
   Only quit a provisioning-opened app during undo, unless the app is retained.
-- After opening 1Password, first show a sign-in confirmation dialog. Only after
-  confirmation show SSH agent setup instructions, then verify the agent offers
-  a key. Verify GitHub SSH repository access before changing origin. These are
+- After opening 1Password, check readiness before prompting. Skip sign-in only
+  when the 1Password agent can perform a local sign/verify test. Otherwise ask
+  for sign-in confirmation before SSH configuration. Check agent, GitHub SSH and
+  Safari enabled state before showing the setup dialog; show it only if a check
+  is not ready or unknown. Never equate process/extension installation with readiness. Verify GitHub SSH repository access before changing origin. These are
   read-only checks/manual app preferences; do not generate/export private keys,
   disable host verification or change app settings before sign-in confirmation.
 - After sign-in confirmation, configure the GitHub-specific SSH IdentityAgent
   through Ansible, preserving the original SSH config for undo in every keep
   mode. Leave an already-correct config untouched. Do not edit 1Password private
   settings.json or silently enable Safari permissions; those remain UI steps.
-- Install dialog early through Ansible. Always show the 1Password readiness
-  checkpoint before GitHub installation, including with --unattended; this is an
-  explicit exception to automatic installation confirmations. No/Escape stops.
+- Install dialog early through Ansible. Show incomplete/unverified 1Password
+  readiness checkpoints even with --unattended, but skip verified completed
+  checkpoints. Unknown/unreadable state must never be treated as ready. No/Escape
+  stops; do not read vault contents or log public keys/account data during probes.
 - Before any rollback, check the checkout for staged, unstaged and untracked
   files. If dirty, show a dialog offering stage-all + make codex-commit (then
   recheck), ignore and proceed, or exit without rollback. Default to Exit; treat
