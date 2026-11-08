@@ -5,6 +5,11 @@
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
     time_machine_volume: /Volumes/time-machine
+    time_machine_choices_file: "{{ playbook_dir }}/time-machine-choices.json"
+  pre_tasks:
+    - name: Skip setup when saved choices were reused or review was cancelled
+      ansible.builtin.meta: end_play
+      when: (time_machine_reuse_choices | default(false)) or (time_machine_saved_cancelled | default(false))
   tasks:
     - name: List the computers and versions available on the Time Machine share
       ansible.builtin.command:
@@ -36,6 +41,7 @@
         fi
         # One renderer keeps the inventory, layout and buttons consistent.
         computer_menu() {
+          if [[ -n "$cached_selection" ]]; then printf '%s' "$cached_selection"; return; fi
           local title=$1 prompt=$2 allow_back=$3 default_item=$4 inventory=$5 message
           shift 5
           local options=(--clear --stdout --no-collapse --cr-wrap --tab-len 4
@@ -63,14 +69,34 @@
         if [[ "$computer_count" == 0 ]]; then
           computer_options=(none 'No computers available. Choose Back or Abort.')
         fi
+        record_choice() {
+          {{ ansible_playbook_python | quote }} {{ (playbook_dir + '/files/wizard_choices.py') | quote }} \
+            "$CHOICES_FILE" put "time_machine.$screen" "\"$1\""
+        }
+        replaying=true
         screen=action
         create_choice=1
         computer_choice=1
+        version_choice=1
+        major_choice=1
+        manual_version=
+        version_error=
         cancel_wizard() {
           printf '{"action":"cancelled","create_type":null,"version_type":null,"computer_index":null,"cancelled_at":"%s"}\n' "$screen"
           exit 0
         }
         while true; do
+          cached_selection=
+          if [[ "$replaying" == true ]]; then
+            cached_selection=$({{ ansible_playbook_python | quote }} -c '
+        import json, os, sys
+        value = json.loads(os.environ["SAVED_ANSWERS"]).get("time_machine." + sys.argv[1], "")
+        if sys.argv[1] == "computer" and value:
+            value = next((str(i + 1) for i, item in enumerate(json.loads(os.environ["COMPUTERS_JSON"])) if item["name"] == value), "")
+        print(value)
+        ' "$screen")
+            if [[ -z "$cached_selection" ]]; then replaying=false; fi
+          fi
           case "$screen" in
             action)
               if selection=$(computer_menu 'Time Machine computers' 'Choose what you want to do:' false 1 "$COMPUTER_LIST" \
@@ -84,6 +110,7 @@
                   *) exit "$status" ;;
                 esac
               fi
+              record_choice "$selection"
               case "$selection" in
                 2) printf '%s\n' '{"action":"restore","create_type":null,"version_type":null,"computer_index":null}'; exit 0 ;;
                 1) screen=create ;;
@@ -104,6 +131,7 @@
                 0) ;;
                 *) exit "$status" ;;
               esac
+              record_choice "$selection"
               create_choice=$selection
               case "$selection" in
                 1) screen=computer ;;
@@ -130,6 +158,11 @@
                 echo 'Invalid computer selection.' >&2
                 exit 2
               fi
+              selected_name=$({{ ansible_playbook_python | quote }} -c '
+        import json, os, sys
+        print(json.dumps(json.loads(os.environ["COMPUTERS_JSON"])[int(sys.argv[1]) - 1]["name"]))
+        ' "$selection")
+              {{ ansible_playbook_python | quote }} {{ (playbook_dir + '/files/wizard_choices.py') | quote }} "$CHOICES_FILE" put time_machine.computer "$selected_name"
               computer_choice=$selection
               screen=version
               ;;
@@ -139,7 +172,7 @@
         print(json.loads(os.environ["COMPUTERS_JSON"])[int(sys.argv[1]) - 1]["display"])
         ' "$computer_choice")
               if selection=$(computer_menu 'New version: choose major or minor' \
-                'Choose the type of new version:' true 1 "$selected_inventory" \
+                'Choose the type of new version:' true "$version_choice" "$selected_inventory" \
                 1 'New minor version (e.g. new macOS version or existing computer from scratch)' \
                 2 'New major version (e.g. newly bought computer)'); then
                 status=0
@@ -152,12 +185,72 @@
                 0) ;;
                 *) exit "$status" ;;
               esac
+              record_choice "$selection"
+              version_choice=$selection
               case "$selection" in
                 1) version_type=minor ;;
-                2) version_type=major ;;
+                2) screen=major; continue ;;
                 *) echo 'Invalid version type.' >&2; exit 2 ;;
               esac
-              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"%s"}\n' "$computer_choice" "$version_type"
+              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"%s","version":null}\n' "$computer_choice" "$version_type"
+              exit 0
+              ;;
+            major)
+              proposed_version=$({{ ansible_playbook_python | quote }} -c '
+        import json, os, sys
+        print(json.loads(os.environ["COMPUTERS_JSON"])[int(sys.argv[1]) - 1]["next_major"])
+        ' "$computer_choice")
+              if selection=$(computer_menu 'New major version' \
+                'Choose the proposed version or specify one manually:' true "$major_choice" "$selected_inventory" \
+                1 "Use proposed version: $proposed_version" \
+                2 'Specify version manually'); then status=0; else status=$?; fi
+              case "$status" in
+                3) screen=version; continue ;;
+                1|255) cancel_wizard ;;
+                0) ;;
+                *) exit "$status" ;;
+              esac
+              record_choice "$selection"
+              major_choice=$selection
+              case "$selection" in
+                1) chosen_version=$proposed_version ;;
+                2) screen=manual; continue ;;
+                *) echo 'Invalid major version choice.' >&2; exit 2 ;;
+              esac
+              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"major","version":"%s"}\n' "$computer_choice" "$chosen_version"
+              exit 0
+              ;;
+            manual)
+              printf -v message 'Computers on the Time Machine share:\n\n%s\n\nEnter a version as major.minor (for example %s).\n\nType to edit the version.\nAfter editing, press Tab to focus Continue, then Enter.\n%s' "$selected_inventory" "$proposed_version" "$version_error"
+              if [[ -n "$cached_selection" ]]; then selection=$cached_selection; status=0
+              elif selection=$(dialog --clear --stdout --no-collapse --cr-wrap --tab-len 4 \
+                --title 'Specify major version manually' --ok-label Continue --cancel-label Abort \
+                --extra-button --extra-label Back \
+                --inputbox "$message" 0 0 "${manual_version:-$proposed_version}" \
+                < "$PROVISION_TTY" 2> "$PROVISION_TTY"); then status=0; else status=$?; fi
+              case "$status" in
+                3) screen=major; continue ;;
+                1|255) cancel_wizard ;;
+                0) ;;
+                *) exit "$status" ;;
+              esac
+              manual_version=$selection
+              if [[ ! "$selection" =~ ^[0-9]+\.[0-9]+$ ]]; then
+                replaying=false
+                version_error='Invalid version. Use digits, a dot, then digits, with at least one digit on each side (e.g. 8.0).'
+                continue
+              fi
+              if ! {{ ansible_playbook_python | quote }} -c '
+        import json, os, sys
+        versions = json.loads(os.environ["COMPUTERS_JSON"])[int(sys.argv[1]) - 1]["versions"]
+        sys.exit(any(tuple(map(int, v.split("."))) == tuple(map(int, sys.argv[2].split("."))) for v in versions))
+        ' "$computer_choice" "$selection"; then
+                replaying=false
+                version_error='That version already exists. Enter an unused version.'
+                continue
+              fi
+              record_choice "$selection"
+              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"major","version":"%s"}\n' "$computer_choice" "$selection"
               exit 0
               ;;
           esac
@@ -171,6 +264,8 @@
         DIALOG_CANCEL: '1'
         DIALOG_ESC: '255'
         DIALOG_EXTRA: '3'
+        CHOICES_FILE: "{{ time_machine_choices_file }}"
+        SAVED_ANSWERS: "{{ provision_saved_answers | default({}) | to_json }}"
         COMPUTERS_JSON: "{{ time_machine_selectable_computers | to_json }}"
         COMPUTER_LIST: "{{ (time_machine_inventory.stdout | from_json).display }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
@@ -202,6 +297,7 @@
         time_machine_create_type: null
         time_machine_computer: null
         time_machine_version_type: null
+        time_machine_version: null
       when: (time_machine_selection.stdout | from_json).action == 'cancelled'
 
     - name: End the wizard cleanly after Abort or Escape
@@ -237,6 +333,7 @@
           {{ time_machine_selectable_computers[(time_machine_selection.stdout | from_json).computer_index - 1].name
              if (time_machine_selection.stdout | from_json).create_type == 'new_version' else none }}
         time_machine_version_type: "{{ (time_machine_selection.stdout | from_json).version_type }}"
+        time_machine_version: "{{ (time_machine_selection.stdout | from_json).version | default(none) }}"
         time_machine_computers: "{{ (time_machine_inventory.stdout | from_json).computers }}"
 
     - name: Explain that restoring an existing computer is not implemented yet
@@ -248,3 +345,20 @@
       ansible.builtin.debug:
         msg: 'TODO: New computer will be implemented later. No computer or backup has been created.'
       when: time_machine_create_type == 'new_computer'
+
+    - name: Explain that a new minor version is not implemented yet
+      ansible.builtin.debug:
+        msg: 'TODO: New minor version will be implemented later. No backup has been created.'
+      when: time_machine_version_type == 'minor'
+
+    - name: Save completed version choices for later provisioning runs
+      ansible.builtin.include_tasks: tasks/save-wizard-answer.yml
+      vars:
+        wizard_answer_key: time_machine.result
+        wizard_answer_value:
+          action: "{{ time_machine_action }}"
+          create_type: "{{ time_machine_create_type }}"
+          computer: "{{ time_machine_computer }}"
+          version_type: "{{ time_machine_version_type }}"
+          version: "{{ time_machine_version }}"
+      when: time_machine_version_type == 'major' and time_machine_version != none

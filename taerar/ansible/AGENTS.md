@@ -1,6 +1,7 @@
 # Provisioning and temporary rollback
 
-- All interactive dialogs must default to Abort/Stop/Exit, never Select or
+- Except for the manual Time Machine version input (which starts focused in
+  its text field), all interactive dialogs must default to Abort, never Select or
   Continue. Use --defaultno for yes/no checkpoints and --default-button cancel
   for menus. Require an explicit choice to proceed; keep Escape as abort.
 - Time Machine Abort/Escape must end the wizard cleanly with an explicit
@@ -51,7 +52,8 @@
 - Open 1Password after installation, recording whether provisioning launched it.
   Only quit a provisioning-opened app during undo, unless the app is retained.
 - After opening 1Password, check readiness before prompting. Skip sign-in only
-  when the 1Password agent can perform a local sign/verify test. Otherwise ask
+  when the 1Password agent can perform a local sign/verify test, or the user
+  explicitly reuses a saved sign-in confirmation. Otherwise ask
   for sign-in confirmation before SSH configuration. Check agent, GitHub SSH and
   Safari enabled state before showing the setup dialog; show it only if a check
   is not ready or unknown. Never equate process/extension installation with readiness. Verify GitHub SSH repository access before changing origin. These are
@@ -63,8 +65,8 @@
   settings.json or silently enable Safari permissions; those remain UI steps.
 - Install dialog early through Ansible. Show incomplete/unverified 1Password
   readiness checkpoints even with --unattended, but skip verified completed
-  checkpoints. Unknown/unreadable state must never be treated as ready. No/Escape
-  stops; do not read vault contents or log public keys/account data during probes.
+  checkpoints and explicitly reused saved confirmations. Unknown/unreadable state must never be treated as ready. Abort/Escape
+  aborts; do not read vault contents or log public keys/account data during probes.
 - Before the setup prompt, test `ssh -T git@github.com` with the 1Password agent
   and strict host verification. GitHub's authenticated greeting plus exit code 1
   means success. Distinguish authentication, host-key, network and timeout errors;
@@ -76,8 +78,8 @@
   remain applied and provisioning can be rerun after resolving the failure.
 - Before any rollback, check the checkout for staged, unstaged and untracked
   files. If dirty, show a dialog offering stage-all + make codex-commit (then
-  recheck), ignore and proceed, or exit without rollback. Default to Exit; treat
-  cancellation as Exit. If dialog/terminal is unavailable or commit fails, stop.
+  recheck), ignore and proceed, or exit without rollback. Default to Abort; treat
+  cancellation as Abort. If dialog/terminal is unavailable or commit fails, stop.
 - After tools are installed, show the Finder NAS Time Machine share dialog. Copy the SMB address to
   the clipboard and show Finder/Cmd+K/paste/+/Connect instructions. Confirm
   continues; Abort/Escape stops, even with --unattended. This is a manual step:
@@ -88,7 +90,8 @@
   version under its computer; list unversioned names directly. Show the inventory
   above Create new computer / Restore existing computer menu choices, including
   with --unattended. Abort/Escape stops. Do not enter or modify sparsebundles;
-  keep the action as an in-memory Ansible fact until later steps are specified.
+  save each accepted intermediate choice according to the shared-store rule
+  below; never persist Abort or invalid input.
 - Create opens a second menu with the same computer/version list and the
   subtypes new computer / new version of existing computer. Continue accepts;
   Back returns to the parent to correct the choice; Abort/Escape stops. Abort
@@ -102,14 +105,23 @@
   of unique computer names only (no versions), in reverse alphabetical order.
   Map selections using that same ordered list. Use Continue/Abort/Back on every
   subsequent wizard screen, default Abort, and Back to the immediately previous
-  screen while preserving its choice. Keep selections in memory; no backup
+  screen while preserving its choice. Persist only completed numbered choices; no backup
   modifications until the corresponding implementation is requested.
 - After picking an existing computer, show only that computer and its versions
   above Minor (new macOS or fresh installation) / Major (new hardware) choices,
   in that order because minor versions are more common.
   Reuse the shared formatter and renderer, retain Continue/Abort/Back with Abort
   default, and return Back to the computer picker preserving its selection.
-  Keep version type as an in-memory fact; do not create or number backups yet.
+  Keep Minor documented as TODO; develop Major first for new hardware.
+  Major proposes max(existing major numbers) + 1 with .0, or 1.0 if no numbered
+  versions exist. Offer the proposal or manual major.minor entry, reject malformed
+  or existing manual versions, and retain the chosen number as an Ansible fact
+  and in the saved-choice JSON.
+  Manual format must match ^[0-9]+\.[0-9]+$: at least one digit on each side
+  of exactly one dot; allow leading zeros. Explain invalid input and let users retry.
+  Keep all screens Continue/Abort/Back with Abort default; do not modify backups.
+  Exception: the manual version input starts with text-field focus; omit
+  --default-button cancel there. Explain that Tab after editing focuses Continue.
 - Record changes in `~/.homelab-provision-state` outside the checkout. Track only
   resources created or modified by provisioning; preserve pre-existing resources.
   Record intent before operations that can partially fail and keep markers until
@@ -119,3 +131,18 @@
 - Validate both scripts with `bash -n` and exercise changed branches using mocks
   or an isolated test environment. Do not install/uninstall real software or
   delete the working checkout just to test these scripts.
+
+- Persist accepted answers from all provisioning wizards immediately in the
+  Git-ignored time-machine-choices.json shared store (schema 2, answers by stable
+  question ID, 0600, atomic merged writes). Record partial runs, never Abort or
+  invalid input. Review before 1Password; reuse skips answered questions only,
+  missing/new IDs still prompt. New selection deletes the file; undo removes it.
+  Use tasks/save-wizard-answer.yml or files/wizard_choices.py for future questions.
+  Changing parent choices invalidates dependent answers. Keep computer names
+  stable; accept schema-1 files. Saved confirmations never replace live readiness
+  or authentication checks; never store credentials. Future questions belong in
+  a stage outside the completed-Time-Machine skip so reuse cannot hide them.
+- Label every ncurses cancellation/exit choice Abort, never Stop or Exit.
+
+- Display saved-answer summaries as aligned key/value columns, one answer per
+  line. Use the shared format_summary() helper, including for future question IDs.

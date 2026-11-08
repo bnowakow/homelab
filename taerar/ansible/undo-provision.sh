@@ -138,7 +138,7 @@ PY
         18 80 3 \
         commit 'Stage ALL changes and run make codex-commit, then recheck' \
         ignore 'Ignore local changes and proceed with undo (may delete them)' \
-        exit 'Exit without undoing anything' < "$undo_tty" 2> "$undo_tty"); then
+        exit 'Abort without undoing anything' < "$undo_tty" 2> "$undo_tty"); then
         echo 'Undo cancelled; no rollback actions were run.'
         return 0
       fi
@@ -165,6 +165,9 @@ PY
   fi
 
   # This stage was installed last. Remove casks before their formula dependencies.
+  # Reverse the final provisioning step before removing its dependencies.
+  rm -f -- "$repo_dir/taerar/ansible/time-machine-choices.json"
+
   undo_homebrew_manifest "$state_dir" make-dependencies-casks cask
   undo_homebrew_manifest "$state_dir" make-dependencies-formulae formula
   rm -f "$state_dir/make-dependencies-casks.tmp" "$state_dir/make-dependencies-formulae.tmp"

@@ -1,0 +1,10 @@
+- name: Save the accepted wizard answer immediately
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_playbook_python }}"
+      - "{{ playbook_dir }}/files/wizard_choices.py"
+      - "{{ time_machine_choices_file | default(playbook_dir + '/time-machine-choices.json') }}"
+      - put
+      - "{{ wizard_answer_key }}"
+      - "{{ wizard_answer_value | to_json }}"
+  changed_when: true

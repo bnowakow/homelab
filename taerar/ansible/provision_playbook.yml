@@ -1,0 +1,8 @@
+- import_playbook: time-machine-saved_playbook.yml
+- import_playbook: onepassword_playbook.yml
+- import_playbook: dotfiles_playbook.yml
+- import_playbook: prezto_playbook.yml
+- import_playbook: github-cli_playbook.yml
+- import_playbook: repository-origin_playbook.yml
+- import_playbook: make-dependencies_playbook.yml
+- import_playbook: time-machine-setup_playbook.yml

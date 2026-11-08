@@ -51,6 +51,7 @@ def main():
         return 1
     for computer in computers:
         computer["display"] = format_computers([computer])
+        computer["next_major"] = str(max((int(v.split(".")[0]) for v in computer["versions"]), default=0) + 1) + ".0"
     print(json.dumps({"computers": computers, "display": format_computers(computers)}))
     return 0
 

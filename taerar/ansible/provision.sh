@@ -126,26 +126,5 @@ ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/terminal-ui_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"
 ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/onepassword_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/dotfiles_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/prezto_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/github-cli_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/repository-origin_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/make-dependencies_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/finder-archive_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended}"
-ansible-playbook -i localhost, -c local \
-  "$repo_dir/taerar/ansible/time-machine_playbook.yml" \
+  "$repo_dir/taerar/ansible/provision_playbook.yml" \
   --extra-vars "{\"provision_unattended\": $unattended}"

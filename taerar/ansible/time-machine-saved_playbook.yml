@@ -1,0 +1,124 @@
+- name: Review saved provisioning wizard choices
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_choices_file: "{{ playbook_dir }}/time-machine-choices.json"
+  tasks:
+    - name: Avoid reviewing saved choices twice in the same run
+      ansible.builtin.meta: end_play
+      when: wizard_choices_reviewed | default(false)
+
+    - name: Mark choices reviewed for this run
+      ansible.builtin.set_fact:
+        wizard_choices_reviewed: true
+        provision_saved_answers: {}
+
+    - name: Start with a fresh selection unless explicitly reused
+      ansible.builtin.set_fact:
+        time_machine_reuse_choices: false
+        time_machine_saved_cancelled: false
+
+    - name: Check for saved choices
+      ansible.builtin.stat:
+        path: "{{ time_machine_choices_file }}"
+      register: saved_choices_file
+
+    - name: Review previous choices when available
+      when: saved_choices_file.stat.exists
+      block:
+        - name: Read and validate the extensible answer store
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - "{{ playbook_dir }}/files/wizard_choices.py"
+              - "{{ time_machine_choices_file }}"
+              - read
+          register: saved_choices_content
+          changed_when: false
+
+        - name: Decode saved answers
+          ansible.builtin.set_fact:
+            saved_wizard_data: "{{ saved_choices_content.stdout | from_json }}"
+
+        - name: Align saved choices into key and value columns
+          ansible.builtin.command:
+            argv:
+              - "{{ ansible_playbook_python }}"
+              - "{{ playbook_dir }}/files/wizard_choices.py"
+              - "{{ time_machine_choices_file }}"
+              - summary
+          register: saved_choices_summary
+          changed_when: false
+
+        - name: Offer saved values or a new selection
+          ansible.builtin.shell: |
+            dialog --clear --stdout --no-collapse --cr-wrap \
+              --title 'Saved provisioning choices' --ok-label Continue --cancel-label Abort \
+              --default-button cancel --menu "$CHOICES_SUMMARY" 0 0 2 \
+              reuse 'Use previous answers (ask only new questions)' new 'Pick new values (delete saved choices)' \
+              < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+          args:
+            executable: /bin/bash
+          environment:
+            CHOICES_SUMMARY: |-
+              Saved file: {{ time_machine_choices_file }}
+
+              {{ saved_choices_summary.stdout }}
+            PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+            TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+            DIALOG_ERROR: '70'
+            DIALOG_CANCEL: '1'
+            DIALOG_ESC: '255'
+          register: saved_choices_answer
+          changed_when: false
+          failed_when: false
+
+        - name: Record cancellation without deleting saved choices
+          ansible.builtin.set_fact:
+            time_machine_saved_cancelled: true
+          when: saved_choices_answer.rc in [1, 255]
+
+        - name: Explain cancellation
+          ansible.builtin.debug:
+            msg: Time Machine setup cancelled. Saved choices were retained.
+          when: time_machine_saved_cancelled
+
+        - name: End review after cancellation
+          ansible.builtin.fail:
+            msg: Provisioning aborted. Saved choices were retained.
+          when: time_machine_saved_cancelled
+
+        - name: Explain terminal failure
+          ansible.builtin.fail:
+            msg: >-
+              {{ 'Time Machine setup cancelled. Saved choices were retained.'
+                 if saved_choices_answer.rc in [1, 255] else
+                 'Could not show saved choices. Run provisioning in an interactive Terminal. Saved choices were retained.' }}
+          when: saved_choices_answer.rc != 0
+
+        - name: Validate the reuse choice
+          ansible.builtin.assert:
+            that: saved_choices_answer.stdout in ['reuse', 'new']
+
+        - name: Reuse all previously answered questions
+          ansible.builtin.set_fact:
+            provision_saved_answers: "{{ saved_wizard_data.answers }}"
+          when: saved_choices_answer.stdout == 'reuse'
+
+        - name: Delete saved choices before starting a fresh wizard
+          ansible.builtin.file:
+            path: "{{ time_machine_choices_file }}"
+            state: absent
+          when: saved_choices_answer.stdout == 'new'
+
+    - name: Restore a completed Time Machine selection when available
+      ansible.builtin.set_fact:
+        time_machine_reuse_choices: true
+        time_machine_action: "{{ provision_saved_answers['time_machine.result'].action }}"
+        time_machine_create_type: "{{ provision_saved_answers['time_machine.result'].create_type }}"
+        time_machine_computer: "{{ provision_saved_answers['time_machine.result'].computer }}"
+        time_machine_version_type: "{{ provision_saved_answers['time_machine.result'].version_type }}"
+        time_machine_version: "{{ provision_saved_answers['time_machine.result'].version }}"
+      when: "'time_machine.result' in provision_saved_answers"

@@ -4,6 +4,10 @@
   gather_facts: false
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  pre_tasks:
+    - name: Skip setup when saved choices were reused or review was cancelled
+      ansible.builtin.meta: end_play
+      when: (time_machine_reuse_choices | default(false)) or (time_machine_saved_cancelled | default(false))
   tasks:
     - name: Copy the archive address and wait for Finder setup confirmation
       ansible.builtin.shell: |
@@ -20,3 +24,12 @@
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
         TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
       changed_when: false
+      when: not ((provision_saved_answers | default({})).get('finder.time_machine_connected', false))
+      register: finder_connection_answer
+
+    - name: Remember Finder connection confirmation
+      ansible.builtin.include_tasks: tasks/save-wizard-answer.yml
+      vars:
+        wizard_answer_key: finder.time_machine_connected
+        wizard_answer_value: true
+      when: not (finder_connection_answer.skipped | default(false))

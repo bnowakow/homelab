@@ -109,7 +109,7 @@ untracked files. If found, a dialog offers:
 - **Commit:** stage all changes with `git add -A`, run `make codex-commit`, then
   recheck. Its normal commit/push prompts remain interactive.
 - **Ignore:** continue undo, accepting that local changes may be deleted.
-- **Exit:** stop without rollback. Escape also exits; Exit is the default choice.
+- **Abort:** end without rollback. Escape also aborts; Abort is the default choice.
 
 If the commit command fails, undo stops. If it leaves changes, the dialog appears
 again. When dialog or an interactive terminal is unavailable, undo stops safely.
@@ -174,16 +174,18 @@ greeting with exit code 1 as success, allows up to 30 seconds for authorization,
 and distinguishes key rejection, host verification, network and timeout failures.
 The dialog lists only checks still needing attention; unknown Safari state does
 not cause it to ask you to redo working SSH setup. The
-second dialog appears only if at least one status is not ready or unknown. It asks you
+second dialog appears only if at least one status is not ready or unknown and
+its confirmation was not explicitly reused from saved answers. It asks you
 to enable **1Password > Settings > Developer > Use the SSH Agent**, make your SSH
 key available, register its public key on GitHub,
 and enable the Safari extension. It then checks the 1Password agent with
 `ssh-add -l` using its socket. If unavailable or empty, provisioning stops with
-instructions. Incomplete/unverified checkpoints still appear with `--unattended`; Stop/Escape
+instructions. Unsaved incomplete/unverified checkpoints still appear with `--unattended`; Abort/Escape
 aborts. Safari detection reads extension-state plists for default and discovered
 profiles. Unreadable, missing, conflicting or unrecognized state falls back to
 manual confirmation; app installation/PlugInKit registration is not proof of
-activation. No confirmation is cached as a substitute for live state.
+activation. Saved confirmations can suppress repeated manual prompts when explicitly reused;
+live checks still run and the final agent/repository checks must pass.
 No app settings are changed before the sign-in confirmation. Undo removes only applications/tools installed
 by provisioning. It does not use Homebrew `--zap` or delete vault data, app
 preferences, or Apple Account purchase history. `--keep` with `"gh":"preferences"` retains
@@ -341,7 +343,8 @@ returns to the first screen. If no computers exist, you can go Back or Abort.
 After choosing a computer, the next screen shows only that computer and its
 versions, with these choices:
 
-1. New minor version (e.g. new macOS version or existing computer from scratch).
+1. New minor version (e.g. new macOS version or existing computer from scratch)
+   (**TODO: implement later**).
 2. New major version (e.g. newly bought computer).
 
 Minor comes first because reinstalling or upgrading macOS is more common than
@@ -349,8 +352,30 @@ replacing the computer.
 
 Continue records the choice; Back returns to the computer picker with the
 previous computer selected. Minor is initially highlighted, while Abort remains
-the default button. This screen only collects
-the version type; creating or numbering a backup will be implemented later.
+the default button. The minor path currently only shows a TODO message; development
+continues with the major path for a newly bought computer.
+
+Choosing **New major version** opens a screen showing the selected computer and
+its versions, with two options:
+
+1. Use the proposed version: the highest existing major number plus one, with
+   minor `.0`. For `1.1`, `3.2`, and `3.4`, the proposal is `4.0`. A computer
+   with only an unversioned backup starts at `1.0`.
+2. Specify a version manually in an input dialog, prefilled with the proposal.
+   Use digits, a dot, then digits: at least one digit before and after the dot
+   (`^[0-9]+\.[0-9]+$`). Leading zeros are accepted; spaces, signs, letters,
+   and extra dots are rejected. Existing
+   versions are rejected and the input dialog explains how to correct the value.
+   The version input initially has keyboard focus, so typing and Backspace work
+   immediately. Press **Tab** to focus Continue, then **Enter** to accept.
+
+Both screens have **Continue**, **Abort**, and **Back**. The proposal menu
+defaults to Abort; the manual-entry screen starts with focus in the input field.
+Back returns to the immediately preceding screen; returning to the version-type
+screen retains Major as the selected row. Manual entry permits an unused version
+other than the proposal; it need not exceed the existing maximum. The chosen
+number is held in `time_machine_version` (null for other paths or cancellation).
+No backup is created or renamed yet.
 
 The selected mode (`time_machine_action`: `create` or `restore`), create subtype
 (`time_machine_create_type`: `new_computer`, `new_version`, or null for restore),
@@ -358,5 +383,45 @@ the selected existing name (`time_machine_computer`, null for other paths),
 version type (`time_machine_version_type`: `major`, `minor`, or null for other
 paths and cancellation),
 and inventory are held as Ansible facts for subsequent tasks in this playbook. This step does not create computers,
-restore data, modify backup bundles, or persist a selection, so undo has nothing
-to reverse. Actual create/restore steps will be added separately.
+restore data, or modify backup bundles. Actual create/restore steps will be added
+separately.
+
+Wizard answers are saved immediately after each accepted step to
+`taerar/ansible/time-machine-choices.json` (permissions `0600`, ignored by Git).
+Despite its original name, this is now the shared store for all provisioning
+wizards: 1Password sign-in confirmation, SSH-agent/Safari setup confirmation,
+Finder connection confirmation, and each Time Machine choice. Abort and invalid
+input are never saved as accepted answers; previously accepted steps survive
+later cancellation or failure. Choosing a TODO path records that choice too.
+
+After bootstrap installs Ansible and `dialog`, `provision.sh` shows all saved
+answers in aligned key/value columns (one answer per line) and the full JSON path **before 1Password and the other wizard stages**.
+**Use previous answers** skips answered questions and continues at the first
+unanswered one. **Pick new values** deletes the JSON immediately and asks again;
+subsequent accepted answers start a new file. **Abort** preserves the file and
+ends provisioning. Abort remains the default, including with `--unattended`.
+The manual version input retains its documented text-focus exception.
+
+Saved confirmations suppress repeat prompts; they do not bypass live readiness,
+SSH-agent, or repository-access checks, installation checks, or account login
+verification. Passwords, tokens and private keys are never saved. Finder is not
+prompted again when its confirmation is reused; the Time Machine inventory is
+still read if its selection is incomplete. A completed Time Machine selection
+restores its facts without rescanning or recomputing its version proposal.
+Changing an earlier Time Machine choice clears dependent saved choices. Computer
+selections use stable names rather than inventory indexes.
+
+The JSON uses `schema_version: 2` and an extensible `answers` object keyed by
+stable question IDs, such as `onepassword.setup`, `finder.time_machine_connected`,
+and `time_machine.computer`; `time_machine.result` stores completed named choices.
+The previous schema-1 Time Machine file is accepted and migrated on the next
+write. Malformed or unsupported files stop with an error. Writes merge answers
+and replace the file atomically. `undo-provision.sh` removes it.
+
+For future questions, use a new stable question ID, ask only when its saved answer
+is absent, validate the answer, and save it immediately through
+`tasks/save-wizard-answer.yml` (or the same `files/wizard_choices.py` helper inside
+a wizard). Missing new IDs must still prompt when older answers are reused.
+Place future questions after the existing wizard in a subsequent play/task stage
+rather than inside the completed-Time-Machine skip. Do not cache account login
+credentials or turn saved confirmations into proof of live readiness.
