@@ -7,7 +7,7 @@ dependsOn:
 helm:
   chart: cleanuparr
   repo: https://media-servarr.shw.al/charts
-  version: 0.20.4
+  version: 0.23.0
   releaseName: cleanuparr
   waitForJobs: true
   valuesFiles:
