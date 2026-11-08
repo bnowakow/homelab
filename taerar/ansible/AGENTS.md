@@ -166,6 +166,12 @@
   only it read-only with noowners; ignore root-level folders without a snapshot.
   Do not use tmutil to list/mount backups (root-owned mounts, wrong owners, busy
   image). Unmount the snapshot before detaching; fall back to diskutil eject.
+- Check Full Disk Access early (full-disk-access_playbook.yml, right after the
+  saved-choices review) whenever the Downloads copy may still happen. Name the
+  outermost .app; offer Abort (default), Open Settings (opens the Full Disk
+  Access pane, then re-shows the dialog) or Continue without, which skips the
+  copy with a message. Never grant access or save this state; it requires an
+  app restart.
 - After a new version number is accepted, ask last whether to copy data from an
   existing version of the selected computer: "none" or one row per existing
   version (including unversioned). Store the semantic value in time_machine.copy

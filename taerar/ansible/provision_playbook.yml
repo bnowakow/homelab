@@ -1,4 +1,5 @@
 - import_playbook: time-machine-saved_playbook.yml
+- import_playbook: full-disk-access_playbook.yml
 - import_playbook: onepassword_playbook.yml
 - import_playbook: dotfiles_playbook.yml
 - import_playbook: prezto_playbook.yml

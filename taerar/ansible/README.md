@@ -466,8 +466,21 @@ attach, the helper checks access by listing
 `/Library/Application Support/com.apple.TCC` (readable only with Full Disk
 Access) and names the app macOS checks: the outermost `.app` above the
 process. When run from an embedded terminal, such as the Claude app's, that
-app needs access, not Terminal. Provisioning only explains this; it never
-changes privacy settings. The Time Machine share must
+app needs access, not Terminal (iTerm, Terminal and Claude each need their
+own). Provisioning only explains this; it never changes privacy settings.
+
+The same check also runs **early**, in `full-disk-access_playbook.yml` right
+after the saved-choices review and before 1Password, whenever the copy may
+still happen (it is skipped when the copy was declined or a reused selection
+has no copy source). If access is missing, a dialog names the app and the
+steps. **Open Settings** opens System Settings directly at Privacy & Security >
+Full Disk Access (`x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles`)
+and shows the dialog again; you still turn the app on yourself. macOS applies
+Full Disk Access only after the app restarts, which ends the run, so the
+choices are **Abort** (default: enable it, quit and reopen the app, rerun) or
+**Continue without**, which runs the other steps and skips the
+`~/Downloads` copy with a message instead of failing at the end. Access is
+checked live on every run and never saved. The Time Machine share must
 be connected in Finder (a reused Finder confirmation does not reconnect it).
 Failures stop with the helper's message, keep saved answers, and can be rerun.
 

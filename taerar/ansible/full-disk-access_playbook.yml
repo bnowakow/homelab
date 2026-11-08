@@ -1,0 +1,78 @@
+- name: Check Full Disk Access early for the later ~/Downloads copy
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  pre_tasks:
+    # Only the ~/Downloads copy reads Time Machine backups. Skip when it cannot
+    # happen: review cancelled, copy declined, or a reused selection has no
+    # source to copy from. On a fresh run it may still happen, so check.
+    - name: Skip when no later step reads a Time Machine backup
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_saved_cancelled | default(false)) or
+        (provision_saved_answers | default({})).get('time_machine.downloads') == 'skip' or
+        ((time_machine_reuse_choices | default(false)) and
+         (time_machine_copy_from | default('none')) in [none, 'none'])
+  tasks:
+    - name: Check whether the app running provisioning has Full Disk Access
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/files/copy_time_machine_downloads.py"
+          - --check-access
+      environment:
+        PYTHONDONTWRITEBYTECODE: '1'
+      register: full_disk_access_check
+      changed_when: false
+
+    - name: Decide whether Full Disk Access is available
+      ansible.builtin.set_fact:
+        # Live state, checked every run and never saved. "unknown" (probe
+        # unavailable) is not treated as missing; the copy reports real errors.
+        provision_full_disk_access: "{{ (full_disk_access_check.stdout | from_json).full_disk_access != 'missing' }}"
+        full_disk_access_app: "{{ (full_disk_access_check.stdout | from_json).app | default('', true) or 'your terminal app' }}"
+
+    # macOS applies Full Disk Access only after the app restarts, which ends
+    # this run, so offer Abort (default) or continuing without the copy.
+    # Open Settings only opens the Full Disk Access pane; granting access stays
+    # the user's choice in System Settings (provisioning never changes it).
+    - name: Explain missing Full Disk Access before any slow steps
+      ansible.builtin.shell: |
+        settings='x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles'
+        note=
+        while true; do
+          status=0
+          dialog --clear --title 'Full Disk Access needed' --defaultno \
+            --yes-label 'Continue without' --no-label 'Abort' \
+            --extra-button --extra-label 'Open Settings' \
+            --yesno "${note}Copying ~/Downloads from a Time Machine backup later in provisioning needs Full Disk Access, which $APP does not have.\n\nTo enable it:\n1. Choose Open Settings (or open System Settings > Privacy & Security > Full Disk Access).\n2. Turn on $APP (use + to add it if it is not listed).\n3. Quit $APP completely (Cmd+Q) and reopen it.\n4. Rerun provisioning.\n\nmacOS applies this only after $APP restarts, so this run cannot pick it up.\n\nAbort after enabling it, or Continue without to finish the other steps and skip the ~/Downloads copy." \
+            24 80 < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1 || status=$?
+          if [ "$status" -ne 3 ]; then exit "$status"; fi
+          if open "$settings"; then
+            note="System Settings is open at Full Disk Access. Turn on $APP there, then choose Abort, quit $APP (Cmd+Q), reopen it and rerun provisioning.\n\n"
+          else
+            note="Could not open System Settings automatically; open Privacy & Security > Full Disk Access yourself.\n\n"
+          fi
+        done
+      args:
+        executable: /bin/bash
+      environment:
+        APP: "{{ full_disk_access_app }}"
+        DIALOG_EXTRA: '3'
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+      register: full_disk_access_answer
+      changed_when: false
+      failed_when: false
+      when: not provision_full_disk_access
+
+    - name: Stop cleanly after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ ('Provisioning aborted: enable Full Disk Access for ' + full_disk_access_app +
+              ' in System Settings > Privacy & Security > Full Disk Access, quit and reopen it, then rerun provisioning. Nothing was changed.')
+             if full_disk_access_answer.rc in [1, 255] else
+             'Could not show the Full Disk Access dialog. Run provisioning from an interactive terminal.' }}
+      when: not provision_full_disk_access and full_disk_access_answer.rc != 0

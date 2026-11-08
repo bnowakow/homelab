@@ -20,6 +20,19 @@
         (time_machine_action | default('cancelled')) != 'create' or
         (time_machine_copy_from | default(none)) in [none, 'none'] or
         (time_machine_saved_cancelled | default(false))
+
+    # The user chose "Continue without" in full-disk-access_playbook.yml.
+    - name: Explain that ~/Downloads is not copied without Full Disk Access
+      ansible.builtin.debug:
+        msg: >-
+          Skipped copying ~/Downloads: {{ full_disk_access_app | default('the terminal app') }}
+          has no Full Disk Access. Enable it, quit and reopen the app, then rerun
+          provisioning to copy ~/Downloads. Your saved answers are unchanged.
+      when: not (provision_full_disk_access | default(true) | bool)
+
+    - name: Skip the ~/Downloads copy without Full Disk Access
+      ansible.builtin.meta: end_play
+      when: not (provision_full_disk_access | default(true) | bool)
   tasks:
     - name: Validate the provisioning environment
       ansible.builtin.assert:

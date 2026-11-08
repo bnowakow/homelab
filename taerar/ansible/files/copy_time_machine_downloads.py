@@ -7,6 +7,8 @@ is created, so undo-provision.sh can remove exactly what this script added.
 
 Usage: copy_time_machine_downloads.py BUNDLE DESTINATION MANIFEST PROD|TEST
 Progress goes to stderr; a JSON summary is printed to stdout.
+       copy_time_machine_downloads.py --check-access
+prints {"full_disk_access": "granted"|"missing"|"unknown", "app": NAME}.
 """
 import json
 import os
@@ -53,18 +55,26 @@ def responsible_app():
     return app
 
 
-def check_full_disk_access():
+def full_disk_access_status():
+    """Return "granted", "missing" or "unknown" (probe unavailable)."""
     try:
         os.listdir(FULL_DISK_ACCESS_PROBE)
     except PermissionError:
+        return "missing"
+    except OSError:
+        return "unknown"
+    return "granted"
+
+
+def check_full_disk_access():
+    # "unknown" continues; reading the backup then reports its own errors.
+    if full_disk_access_status() == "missing":
         app = responsible_app()
         target = f"the {app} app" if app else "the terminal app running provisioning"
         raise CopyError(
             f"Full Disk Access is not enabled for {target}, so macOS will not let it read "
             f"Time Machine backups. Enable {app or 'it'} in System Settings > Privacy & "
-            "Security > Full Disk Access, quit and reopen it, then rerun provisioning.") from None
-    except OSError:
-        pass  # Probe unavailable; rely on the errors from reading the backup.
+            "Security > Full Disk Access, quit and reopen it, then rerun provisioning.")
 
 
 def progress(message):
@@ -293,6 +303,10 @@ def copy_files(files, destination, manifest):
 
 
 def main():
+    if sys.argv[1:] == ["--check-access"]:
+        # Used by full-disk-access_playbook.yml early in provisioning.
+        print(json.dumps({"full_disk_access": full_disk_access_status(), "app": responsible_app()}))
+        return
     bundle, destination, manifest, mode = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
     if mode not in ("PROD", "TEST"):
         raise CopyError("Environment must be PROD or TEST.")
