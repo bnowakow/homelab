@@ -7,7 +7,10 @@ is created, so undo-provision.sh can remove exactly what this script added.
 Files are copied with Homebrew rsync 3.x (extended attributes included); the
 macOS openrsync is never used because it cannot copy extended attributes.
 
-Usage: copy_time_machine_downloads.py BUNDLE DESTINATION MANIFEST PROD|TEST
+Usage: copy_time_machine_downloads.py [--dia] BUNDLE DESTINATION MANIFEST PROD|TEST
+Without --dia, copies ~/Downloads into DESTINATION (the Downloads folder). With
+--dia, copies Dia's plain configuration files from the user's home folder in
+the backup into DESTINATION (the home folder); TEST copies only Preferences.
 Progress goes to stderr; a JSON summary is printed to stdout.
        copy_time_machine_downloads.py --check-access
 prints {"full_disk_access": "granted"|"missing"|"unknown", "app": NAME}.
@@ -249,6 +252,71 @@ def find_downloads(backup, user):
                     f"(users found in the backup: {found}).")
 
 
+def find_user_home(backup, user):
+    """Find Users/<user> in one of the backed-up volumes (the "Data" volume first)."""
+    try:
+        volumes = sorted((path for path in backup.iterdir() if path.is_dir()),
+                         key=lambda path: (not path.name.endswith(" - Data"), path.name))
+    except PermissionError as error:
+        raise CopyError(FULL_DISK_ACCESS) from error
+    users = set()
+    for volume in volumes:
+        home = volume / "Users" / user
+        if home.is_dir():
+            return home
+        try:
+            users.update(path.name for path in (volume / "Users").iterdir() if path.is_dir())
+        except OSError:
+            pass
+    found = ", ".join(sorted(users - {"Shared"})) or "none"
+    raise CopyError(f"The latest backup has no home folder for user {user} "
+                    f"(users found in the backup: {found}).")
+
+
+# Dia (Chromium based) configuration that moves between Macs. Only plain-text
+# settings are listed: Dia's own databases and the browser's cookies, saved
+# logins and autofill data are encrypted with a key that stays on the source
+# Mac, and history, site data and caches are not configuration.
+DIA_ROOT = Path("Library/Application Support/Dia")
+DIA_PLIST = Path("Library/Preferences/company.thebrowser.dia.plist")
+DIA_CONFIG = [
+    "User Data/Local State",
+    "User Data/Default/Preferences",
+    "User Data/Default/Secure Preferences",
+    "User Data/Default/Bookmarks",
+    "User Data/Default/Extensions",
+    "User Data/Default/Local Extension Settings",
+    "User Data/Default/Sync Extension Settings",
+    "User Data/Default/Managed Extension Settings",
+    "User Data/Default/Extension State",
+    "User Data/Default/Extension Rules",
+    "User Data/Default/Extension Scripts",
+]
+DIA_TEST = DIA_ROOT / "User Data/Default/Preferences"
+
+
+def plan_dia(home, mode):
+    """Return (path relative to the home folder, source path) pairs for Dia."""
+    if mode == "TEST":
+        # Only the main preferences file.
+        path = home / DIA_TEST
+        return [(DIA_TEST, path)] if path.is_file() and not path.is_symlink() else []
+    files = {}
+    for entry in [DIA_ROOT / item for item in DIA_CONFIG] + [DIA_PLIST]:
+        path = home / entry
+        if path.is_dir() and not path.is_symlink():
+            for folder, directories, names in os.walk(path):
+                directories.sort()
+                for name in sorted(names):
+                    if name in SKIPPED_NAMES or name == "LOCK":
+                        continue
+                    found = Path(folder) / name
+                    files[found.relative_to(home)] = found
+        elif path.is_file() or path.is_symlink():
+            files[entry] = path
+    return sorted(files.items(), key=lambda item: str(item[0]))
+
+
 def plan_copy(source, mode):
     """Return (relative path, source path) pairs of files to copy."""
     if mode == "TEST":
@@ -357,7 +425,11 @@ def main():
         # Used by full-disk-access_playbook.yml early in provisioning.
         print(json.dumps({"full_disk_access": full_disk_access_status(), "app": responsible_app()}))
         return
-    bundle, destination, manifest, mode = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+    args = sys.argv[1:]
+    what = "downloads"
+    if args and args[0] == "--dia":
+        what, args = "dia", args[1:]
+    bundle, destination, manifest, mode = Path(args[0]), Path(args[1]), Path(args[2]), args[3]
     if mode not in ("PROD", "TEST"):
         raise CopyError("Environment must be PROD or TEST.")
     if not bundle.is_dir():
@@ -371,10 +443,17 @@ def main():
         progress(f"Attaching {bundle.name} read-only (this can take a while over the network)...")
         whole, devices, volume = attach(bundle, mountpoint)
         backup = latest_backup(mountpoint, volume, snapshot_mountpoint)
-        source = find_downloads(backup, os.environ.get("USER") or Path.home().name)
+        user = os.environ.get("USER") or Path.home().name
         progress(f"Latest backup: {backup.name}")
         try:
-            files = plan_copy(source, mode)
+            if what == "dia":
+                source = find_user_home(backup, user)
+                files = plan_dia(source, mode)
+                if not files:
+                    raise CopyError(f"The latest backup has no Dia configuration for user {user}.")
+            else:
+                source = find_downloads(backup, user)
+                files = plan_copy(source, mode)
         except PermissionError as error:
             raise CopyError(FULL_DISK_ACCESS) from error
         needed = sum(path.lstat().st_size for relative, path in files
@@ -389,8 +468,8 @@ def main():
         progress(f"Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
                  f"{len(files) - new} already present will be kept...")
         copied, skipped = copy_files(files, source, destination, manifest,
-                                     manifest.parent / "time-machine-downloads-work")
-        print(json.dumps({"backup": backup.name, "mode": mode, "copied": copied,
+                                     manifest.parent / (manifest.stem + "-work"))
+        print(json.dumps({"what": what, "backup": backup.name, "mode": mode, "copied": copied,
                           "skipped_existing": skipped,
                           "copied_names": [str(relative) for relative, _ in files][:5]}))
     finally:

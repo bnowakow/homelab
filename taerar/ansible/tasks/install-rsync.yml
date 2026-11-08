@@ -1,0 +1,38 @@
+# Installs Homebrew rsync 3.x when missing (registers rsync_install; its
+# "rsync=PATH" output line locates the binary). macOS ships openrsync (rsync
+# 2.6.9 compatible), which cannot copy extended attributes such as Finder tags
+# and "Where from". Included by every playbook that copies files from a backup.
+- name: Install Homebrew rsync for copying files from backups
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    if [[ "$UNATTENDED" != true ]]; then unset HOMEBREW_NO_ASK; fi
+    installed_formulae=$(brew list --formula)
+    if [[ $'\n'"$installed_formulae"$'\n' == *$'\nrsync\n'* ]]; then
+      echo already-installed
+    else
+      # Record rsync and its missing dependencies before installing, so a
+      # partial installation can be undone too.
+      {
+        if [[ -f "$STATE_DIR/time-machine-formulae" ]]; then cat "$STATE_DIR/time-machine-formulae"; fi
+        echo rsync
+        brew deps --missing --formula rsync
+      } | sed '/^$/d' | sort -u > "$STATE_DIR/time-machine-formulae.tmp"
+      mv "$STATE_DIR/time-machine-formulae.tmp" "$STATE_DIR/time-machine-formulae"
+      brew install --formula rsync < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+      echo installed
+    fi
+    echo "rsync=$(brew --prefix rsync)/bin/rsync"
+  args:
+    executable: /bin/bash
+  environment:
+    STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
+    UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+    PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+    HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | default(false) | bool else '' }}"
+    HOMEBREW_NO_AUTO_UPDATE: '1'
+    HOMEBREW_NO_INSTALL_CLEANUP: '1'
+    HOMEBREW_NO_INSTALL_UPGRADE: '1'
+    HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+  register: rsync_install
+  changed_when: "'installed' in rsync_install.stdout_lines"

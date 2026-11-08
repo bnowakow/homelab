@@ -46,6 +46,9 @@
   run claude auth login / codex login in the terminal or open the desktop app,
   and verify afterwards. Never handle credentials or save sign-in state; undo
   removes installs but keeps sign-ins and app data.
+- Install the Dia browser right after the AI tools (dia_playbook.yml, cask
+  thebrowsercompany-dia, Apple silicon and macOS 14+ only, skipped with a message
+  otherwise), tracked in dia-casks and dia-formulae for undo before the AI tools.
 - Reuse `ansible/roles/prezto` for Linux and macOS. Keep clone/submodule/link
   logic shared, and package/login-shell handling in platform wrappers. Default
   target paths to `~`. Run the Mac Prezto playbook after dotfiles; retain existing
@@ -178,6 +181,12 @@
   only it read-only with noowners; ignore root-level folders without a snapshot.
   Do not use tmutil to list/mount backups (root-owned mounts, wrong owners, busy
   image). Unmount the snapshot before detaching; fall back to diskutil eject.
+- After the Downloads step, ask (saved as time_machine.dia) whether to copy Dia
+  configuration from the same selected backup. Copy only the plain settings
+  listed in DIA_CONFIG (never cookies, logins, history, caches or Dia's encrypted
+  databases), only while Dia is not running, never over existing files, in TEST
+  only Preferences. Skip when Dia is not installed. Share the Full Disk Access and
+  share-mounted conditions with Downloads: skip only when both copies are declined.
 - Copy any files from Time Machine backups with Homebrew rsync 3.x (-lptX,
   --ignore-existing, --files-from), never macOS openrsync or Python copies,
   which drop extended attributes. Install the rsync formula through Ansible

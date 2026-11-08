@@ -21,14 +21,14 @@ clones this repository into `~/code/homelab` over HTTPS if missing, and installs
 Homebrew and Ansible if needed, then uses Ansible to install 1Password for Mac and
 1Password for Safari, then run `make install-dotfiles` through Ansible to copy
 dotfiles into `~/`. It then installs the Claude and Codex desktop apps (and
-their CLIs when missing) and signs in to each one at a time. It installs Prezto and Powerlevel10k using the shared Linux/macOS
+their CLIs when missing) and signs in to each one at a time, then installs the Dia browser. It installs Prezto and Powerlevel10k using the shared Linux/macOS
 role, then installs GitHub CLI, opens browser login, switches
 origin to SSH, and installs missing tools used by the root Makefile targets.
 Ansible then guides Finder connection to the NAS Time Machine share and computer/
 version selection. Both minor and major paths offer suggested or manual version
 numbers, then ask whether to copy data from an existing version of that
-computer, and optionally copy `~/Downloads` from that backup's latest snapshot
-(only its first file when `.env` sets `HOMELAB_PROVISION_ENV=TEST`; see
+computer, and optionally copy `~/Downloads` and the Dia browser settings from that
+backup's latest snapshot (only one file each when `.env` sets `HOMELAB_PROVISION_ENV=TEST`; see
 `ansible/.env.sample`). Backup creation, other copying and restoration are
 still TODO.
 

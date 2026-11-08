@@ -33,6 +33,50 @@ undo_homebrew_manifest() {
   rm "$state_dir/$manifest"
 }
 
+undo_copied_files() {
+  # Remove files copied from a Time Machine backup (recorded in a manifest
+  # before they were created) only while they are still unchanged since the
+  # copy; keep anything edited or replaced, and folders that are not empty.
+  # The backup itself was only read.
+  local state_dir=$1 name=$2 label=$3
+  if [[ -f "$state_dir/$name.jsonl" ]]; then
+    if ! python3 - "$state_dir/$name.jsonl" <<'PY'
+import json, os, sys
+entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
+removed = kept = 0
+for entry in reversed(entries):
+    path = entry["path"]
+    if entry["type"] == "file":
+        temporary = entry.get("temporary")
+        if temporary and os.path.lexists(temporary):
+            os.unlink(temporary)
+        if not os.path.lexists(path):
+            continue
+        stat = os.lstat(path)
+        if stat.st_size == entry["size"] and stat.st_mtime_ns == entry["mtime_ns"]:
+            os.unlink(path)
+            removed += 1
+        else:
+            kept += 1
+            print("Kept modified copied file: " + path)
+    elif entry["type"] == "directory" and os.path.isdir(path) and not os.path.islink(path):
+        try:
+            os.rmdir(path)
+        except OSError:
+            print("Kept non-empty copied folder: " + path)
+print(f"Removed {removed} file(s) copied from the Time Machine backup; kept {kept} modified.")
+PY
+    then
+      echo "Undo stopped while removing $label. Fix the error above and rerun." >&2
+      return 1
+    fi
+    rm "$state_dir/$name.jsonl"
+  fi
+  # rsync's in-progress and interrupted files never reach the destination; they
+  # live here, inside the state folder.
+  rm -rf -- "$state_dir/$name-work"
+}
+
 main() {
   local keep_gh_preferences=false keep_onepassword=false
   local keep_json= keep_supplied=false keep_modes
@@ -164,45 +208,10 @@ PY
     retaining_onepassword=true
   fi
 
-  # Files copied into ~/Downloads from a Time Machine backup were the final step.
-  # Remove only items still unchanged since the copy; keep anything edited or
-  # replaced, and folders that are not empty. The backup itself was read-only.
-  if [[ -f "$state_dir/time-machine-downloads.jsonl" ]]; then
-    if ! python3 - "$state_dir/time-machine-downloads.jsonl" <<'PY'
-import json, os, sys
-entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
-removed = kept = 0
-for entry in reversed(entries):
-    path = entry["path"]
-    if entry["type"] == "file":
-        temporary = entry.get("temporary")
-        if temporary and os.path.lexists(temporary):
-            os.unlink(temporary)
-        if not os.path.lexists(path):
-            continue
-        stat = os.lstat(path)
-        if stat.st_size == entry["size"] and stat.st_mtime_ns == entry["mtime_ns"]:
-            os.unlink(path)
-            removed += 1
-        else:
-            kept += 1
-            print("Kept modified copied file: " + path)
-    elif entry["type"] == "directory" and os.path.isdir(path) and not os.path.islink(path):
-        try:
-            os.rmdir(path)
-        except OSError:
-            print("Kept non-empty copied folder: " + path)
-print(f"Removed {removed} file(s) copied from the Time Machine backup; kept {kept} modified.")
-PY
-    then
-      echo 'Undo stopped while removing files copied into ~/Downloads. Fix the error above and rerun.' >&2
-      return 1
-    fi
-    rm "$state_dir/time-machine-downloads.jsonl"
-  fi
-  # rsync's in-progress and interrupted files never reach ~/Downloads; they
-  # live here, inside the state folder.
-  rm -rf -- "$state_dir/time-machine-downloads-work"
+  # Files copied from Time Machine backups were the final steps, in reverse order:
+  # Dia settings, then ~/Downloads.
+  undo_copied_files "$state_dir" time-machine-dia 'the Dia settings copied from a backup' || return 1
+  undo_copied_files "$state_dir" time-machine-downloads 'files copied into ~/Downloads' || return 1
   # Homebrew rsync was installed only for that copy.
   undo_homebrew_manifest "$state_dir" time-machine-formulae formula
   rm -f "$state_dir/time-machine-formulae.tmp"
@@ -329,6 +338,12 @@ PY
     fi
     rmdir "$state_dir/prezto"
   fi
+
+  # Dia was installed right after the AI tools; remove it first. Its profile and
+  # sign-in stay (app data is preserved like the other apps').
+  undo_homebrew_manifest "$state_dir" dia-casks cask
+  undo_homebrew_manifest "$state_dir" dia-formulae formula
+  rm -f "$state_dir/dia-formulae.tmp"
 
   # Claude/Codex apps and CLIs were installed right after dotfiles. Remove only
   # what provisioning installed; sign-ins and app data stay (like 1Password data).

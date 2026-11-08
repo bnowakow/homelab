@@ -84,6 +84,8 @@ def load(path):
             raise ValueError("Invalid version to copy data from")
     if answers.get("time_machine.downloads", "copy") not in ["copy", "skip"]:
         raise ValueError("Invalid Downloads copy choice")
+    if answers.get("time_machine.dia", "copy") not in ["copy", "skip"]:
+        raise ValueError("Invalid Dia copy choice")
     return data
 
 
@@ -128,6 +130,7 @@ def format_summary(answers):
         "time_machine.manual": "Manually entered version",
         "time_machine.copy": "Copy data from",
         "time_machine.downloads": "Copy ~/Downloads from backup",
+        "time_machine.dia": "Copy Dia settings from backup",
     }
     meanings = {"create": "Create a new computer or version", "restore": "Restore an existing computer",
                 "new_version": "New version of an existing computer", "new_computer": "Entirely new computer",
@@ -142,7 +145,7 @@ def format_summary(answers):
             rendered = source + (": " + value["version"] if value.get("version") else " (number not recorded in older file)")
         elif key == "time_machine.copy":
             rendered = copy_source_label(value)
-        elif key == "time_machine.downloads":
+        elif key in ("time_machine.downloads", "time_machine.dia"):
             rendered = "Copy from the latest backup" if value == "copy" else "Do not copy"
         elif value is True:
             rendered = "Confirmed"
@@ -193,7 +196,7 @@ def main():
         if step in order and existing != value:
             # downloads is asked after the wizard, so it depends on every step
             # but changing it does not invalidate the completed result.
-            for later in order[order.index(step) + 1:] + ["result", "number", "downloads"]:
+            for later in order[order.index(step) + 1:] + ["result", "number", "downloads", "dia"]:
                 data["answers"].pop("time_machine." + later, None)
         data["answers"][key] = value
         if key in ["time_machine.major", "time_machine.result"] and isinstance(value, dict) and value.get("version"):

@@ -130,9 +130,9 @@ Or download and run the version from `master`:
 
 Provisioning records its changes in `~/.homelab-provision-state`, including
 attempts that may fail partway through. Undo reverses them in order: remove
-unchanged files copied into `~/Downloads` from a Time Machine backup, remove Makefile dependency packages, restore
+unchanged Dia settings and files copied into `~/Downloads` from a Time Machine backup, remove Makefile dependency packages, restore
 the original origin URLs, undo the GitHub login unless retained, remove
-the newly created Prezto checkout/runcom links, remove the Claude/Codex apps and CLIs it installed
+the newly created Prezto checkout/runcom links, remove the Dia browser and the Claude/Codex apps and CLIs it installed
 (sign-ins are kept), restore dotfiles, remove GitHub
 CLI and its new dependencies, remove
 the newly installed Safari extension, 1Password desktop app and mas dependencies,
@@ -262,6 +262,15 @@ Installed casks and their new dependencies are recorded in
 installing. Undo removes only those, before restoring dotfiles. It does not sign
 you out or delete app data, similar to 1Password preferences. `make-dependencies`
 still installs the same CLI casks if they are missing, but normally finds them.
+
+Next, `dia_playbook.yml` installs the [Dia browser](https://www.diabrowser.com/)
+with the Homebrew cask `thebrowsercompany-dia`, unless `Dia.app` already exists
+in `/Applications` or `~/Applications`. Dia requires Apple silicon and macOS 14
+or later; on another Mac provisioning prints a message and skips it. The cask
+and its new dependencies are recorded in `dia-casks` and `dia-formulae` in
+`~/.homelab-provision-state` before installing. Undo removes Dia before the AI
+tools, and keeps its profile and sign-in. Copying its settings from a backup is
+asked later, with the Time Machine steps (see below).
 
 Next, `prezto_playbook.yml` reuses [the shared Prezto role](../../ansible/roles/prezto/README.md)
 also used by `nas/ansible/proxmox-prezto_playbook.yml`. It installs `~/.zprezto`
@@ -535,8 +544,9 @@ be connected in Finder (a reused Finder confirmation does not reconnect it).
 Failures stop with the helper's message, keep saved answers, and can be rerun.
 
 **Environment:** `HOMELAB_PROVISION_ENV` selects `PROD` (default) or `TEST`.
-`PROD` copies all of `~/Downloads`. `TEST` copies only the first visible
-top-level file by name, for trying provisioning on a Mac with little free space.
+`PROD` copies all of `~/Downloads` and Dia's configuration. `TEST` copies only the
+first visible top-level file of `~/Downloads` by name and only Dia's `Preferences`,
+for trying provisioning on a Mac with little free space.
 `provision.sh` reads it from an exported variable, otherwise from
 `taerar/ansible/.env` (Git-ignored), otherwise uses `PROD`. Copy
 [`.env.sample`](.env.sample) to `.env` to change it; the file is parsed as
@@ -552,6 +562,44 @@ removes copied files only when their size and modification time are
 unchanged, removes created folders only when empty, deletes that work folder,
 and then uninstalls the Homebrew `rsync` it installed (a pre-existing `rsync`
 is kept). Edited files and files that existed before are kept.
+
+### Copying Dia settings from the selected backup
+
+After the Downloads step, when a backup to copy data from was selected and Dia
+is installed, `time-machine-dia_playbook.yml` asks whether to copy Dia's
+configuration from the **latest** backup in that same bundle. Abort is the
+default; the answer (`copy` or `skip`) is saved as `time_machine.dia` and is
+cleared when an earlier Time Machine answer changes. It reuses the Downloads
+machinery: Full Disk Access, the read-only snapshot mount, Homebrew `rsync`
+(installed on demand by the shared `tasks/install-rsync.yml`), and
+`--ignore-existing`, so files that already exist are never overwritten.
+
+Dia is Chromium based, so only plain settings are copied (from
+`Library/Application Support/Dia` in the home folder inside the backup, plus
+`Library/Preferences/company.thebrowser.dia.plist`):
+
+- `User Data/Local State`, `User Data/Default/Preferences` and `Secure Preferences`
+- `Bookmarks`
+- `Extensions`, `Local Extension Settings`, `Sync Extension Settings`,
+  `Managed Extension Settings`, `Extension State`, `Extension Rules`,
+  `Extension Scripts`
+
+Not copied: history, cookies, saved logins, autofill, site data and caches, and
+Dia's own databases (tabs, skills, key-value stores). Dia's databases are
+encrypted, and an encrypted browser profile is normally tied to a key kept in the
+Mac's Keychain, so they cannot be read on another Mac; signing in to Dia syncs
+what it syncs. Because Dia creates these files on first launch, copy **before
+opening Dia**: a file Dia already created is kept, not replaced. The step
+refuses to run while Dia is running, since a browser rewrites its settings when
+it quits. Chromium protects `Secure Preferences` with integrity checks that may
+not accept a copy made on another Mac; it then resets only the protected
+settings. This has not been verified on a real second Mac.
+
+`TEST` copies only `Preferences`. Copied files and created folders are recorded
+before `rsync` starts in `~/.homelab-provision-state/time-machine-dia.jsonl`
+(work files in `time-machine-dia-work`), and undo removes only the files that
+are still unchanged, like for Downloads. The helper is the same
+`files/copy_time_machine_downloads.py` with `--dia`.
 
 **TODO:** when **New computer** is implemented, ask the same copy question,
 but first pick a computer from the share and then one of that computer's

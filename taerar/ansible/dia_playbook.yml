@@ -1,0 +1,56 @@
+- name: Install the Dia browser
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  tasks:
+    # https://www.diabrowser.com/ is distributed through the Homebrew cask
+    # thebrowsercompany-dia, which requires Apple silicon and macOS 14 or later.
+    - name: Install Dia with Homebrew and record rollback manifests
+      ansible.builtin.shell: |
+        set -euo pipefail
+        umask 077
+        if [[ "$UNATTENDED" != true ]]; then unset HOMEBREW_NO_ASK; fi
+        if [[ -d /Applications/Dia.app || -d "$HOME/Applications/Dia.app" ]]; then
+          echo already-installed; exit 0
+        fi
+        installed_casks=$(brew list --cask)
+        if [[ $'\n'"$installed_casks"$'\n' == *$'\nthebrowsercompany-dia\n'* ]]; then
+          echo already-installed; exit 0
+        fi
+        major=$(sw_vers -productVersion | cut -d. -f1)
+        if [[ "$(uname -m)" != arm64 || "$major" -lt 14 ]]; then
+          echo unsupported; exit 0
+        fi
+        # Record the cask and its missing dependencies before installing, so a
+        # partial installation can be undone too.
+        dependencies=$(brew deps --missing --cask thebrowsercompany-dia)
+        printf '%s\n' thebrowsercompany-dia > "$STATE_DIR/dia-casks"
+        if [[ -n "$dependencies" ]]; then
+          {
+            if [[ -f "$STATE_DIR/dia-formulae" ]]; then cat "$STATE_DIR/dia-formulae"; fi
+            printf '%s\n' "$dependencies"
+          } | sed '/^$/d' | sort -u > "$STATE_DIR/dia-formulae.tmp"
+          mv "$STATE_DIR/dia-formulae.tmp" "$STATE_DIR/dia-formulae"
+        fi
+        brew install --cask thebrowsercompany-dia < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1
+        echo installed
+      args:
+        executable: /bin/bash
+      environment:
+        STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
+        UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | default(false) | bool else '' }}"
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+      register: dia_install
+      changed_when: "'installed' in dia_install.stdout_lines"
+
+    - name: Explain why Dia was not installed
+      ansible.builtin.debug:
+        msg: Skipped installing Dia, which requires Apple silicon and macOS 14 or later.
+      when: "'unsupported' in dia_install.stdout_lines"
