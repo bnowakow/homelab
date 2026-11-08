@@ -18,6 +18,18 @@
     - name: Choose the Time Machine action and optional create subtype
       ansible.builtin.shell: |
         set -euo pipefail
+        if ! command -v dialog >/dev/null 2>&1; then
+          echo 'dialog is not installed or is not on PATH.' >&2
+          exit 70
+        fi
+        if [[ "${TERM:-dumb}" == dumb ]] || ! infocmp "$TERM" >/dev/null 2>&1; then
+          echo 'This terminal type is unavailable. Use an interactive Terminal with a valid TERM setting.' >&2
+          exit 70
+        fi
+        if [[ ! -c "$PROVISION_TTY" || ! -r "$PROVISION_TTY" || ! -w "$PROVISION_TTY" ]]; then
+          echo 'The interactive terminal is unavailable. Run provisioning directly from Terminal.' >&2
+          exit 70
+        fi
         # One renderer keeps the inventory, layout and buttons consistent.
         computer_menu() {
           local title=$1 prompt=$2 allow_back=$3 default_item=$4 message
@@ -125,6 +137,10 @@
       environment:
         # dialog otherwise uses 255 for both internal errors and Escape.
         DIALOG_ERROR: '70'
+        DIALOG_OK: '0'
+        DIALOG_CANCEL: '1'
+        DIALOG_ESC: '255'
+        DIALOG_EXTRA: '3'
         COMPUTERS_JSON: "{{ (time_machine_inventory.stdout | from_json).computers | to_json }}"
         COMPUTER_LIST: "{{ (time_machine_inventory.stdout | from_json).display }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"

@@ -310,7 +310,10 @@ own tab-indented line beneath its computer, for example:
    (**TODO: implement later**).
 
 Abort is the default button; Enter without changing focus aborts. Abort/Escape
-stops provisioning; this manual choice is also required with
+ends the wizard cleanly with a cancellation message, without a failed-command
+dump. No Time Machine data is changed; earlier provisioning steps remain applied.
+Real dialog rendering/terminal errors still fail with concise guidance. To
+proceed, explicitly focus Continue. This manual choice is also required with
 `--unattended`. An absent or unreadable share stops with connection instructions.
 Choosing **Create a new computer** opens a second dialog with the same computer
 and version list, followed by:
