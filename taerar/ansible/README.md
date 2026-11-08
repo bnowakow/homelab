@@ -132,7 +132,8 @@ Provisioning records its changes in `~/.homelab-provision-state`, including
 attempts that may fail partway through. Undo reverses them in order: remove
 unchanged files copied into `~/Downloads` from a Time Machine backup, remove Makefile dependency packages, restore
 the original origin URLs, undo the GitHub login unless retained, remove
-the newly created Prezto checkout/runcom links, restore dotfiles, remove GitHub
+the newly created Prezto checkout/runcom links, remove the Claude/Codex apps and CLIs it installed
+(sign-ins are kept), restore dotfiles, remove GitHub
 CLI and its new dependencies, remove
 the newly installed Safari extension, 1Password desktop app and mas dependencies,
 remove early dialog dependencies, then remove Ansible and its newly installed dependencies, uninstall Homebrew using the
@@ -220,6 +221,47 @@ GitHub preferences through one undo does not reinstall dotfiles on a later full
 undo. Older snapshots are handled when restoring this shared file.
 Standalone `make install-dotfiles` retains its usual `~/.homelab-dotfiles-backup.*`
 backups and does not participate in provisioning rollback.
+
+Next, `ai-tools_playbook.yml` installs the Claude and Codex tools and signs in
+to each, one at a time. It runs right after dotfiles (which must directly
+follow 1Password), so 1Password and its SSH setup are already done.
+
+1. **Desktop apps:** the Homebrew casks `claude` (Claude) and `codex-app`
+   (Codex) are installed when `Claude.app` / `Codex.app` are missing from
+   `/Applications` and `~/Applications`.
+2. **CLIs:** a desktop app may already include its CLI, so the CLI is only
+   installed when it cannot be found. The Claude CLI is searched on `PATH` and in
+   `~/.local/bin` and `~/.claude/local`; the Codex CLI on `PATH`, in
+   `Codex.app`, and in the CLI bundled with `ChatGPT.app`. Missing ones are
+   installed as the casks `claude-code` and `codex` (after the desktop apps, so
+   a Codex CLI bundled in the new app is used instead). Claude Desktop's bundled
+   Claude Code lives under `~/Library/Application Support/Claude` and is not on
+   `PATH`, so it does not count.
+3. **Sign-in, in this order:** Claude desktop, Claude CLI, Codex desktop,
+   Codex CLI. Each tool is checked **first**, live on every run, and nothing is
+   asked or opened when it is already signed in:
+   - Claude CLI: `claude auth status`; Codex CLI: `codex login status`.
+   - Claude desktop: whether its `config.json` in
+     `~/Library/Application Support/Claude` holds a non-empty
+     `oauth:tokenCacheV2` (only "non-empty" is tested; the value is never
+     printed or read further).
+   - Codex desktop: it shares its sign-in (`~/.codex/auth.json`) with the CLI,
+     so `codex login status` covers both.
+
+   Only for a tool that is signed out does a menu offer **Sign in now** /
+   **I have signed in**, **Skip** or **Abort** (default). A CLI sign-in runs
+   `claude auth login` / `codex login` in the terminal, you approve in the
+   browser, and provisioning verifies the result. For a desktop app,
+   provisioning opens it and you sign in in its window; if the sign-in is not
+   detected afterwards it continues with a warning, since you confirmed it.
+   Skipped tools are asked again on the next run. Passwords and tokens are only
+   typed in the browser or the app, and nothing is saved in the answers file.
+
+Installed casks and their new dependencies are recorded in
+`ai-tools-casks` and `ai-tools-formulae` in `~/.homelab-provision-state` before
+installing. Undo removes only those, before restoring dotfiles. It does not sign
+you out or delete app data, similar to 1Password preferences. `make-dependencies`
+still installs the same CLI casks if they are missing, but normally finds them.
 
 Next, `prezto_playbook.yml` reuses [the shared Prezto role](../../ansible/roles/prezto/README.md)
 also used by `nas/ansible/proxmox-prezto_playbook.yml`. It installs `~/.zprezto`

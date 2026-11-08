@@ -34,6 +34,18 @@
   GitHub CLI installation/login. Both stages can change ~/.gitconfig: preserve
   its pre-dotfiles baseline in the GitHub snapshot and handle older rollback
   snapshots without restoring a later copy over the original file.
+- Run ai-tools_playbook.yml right after dotfiles: install the Claude desktop
+  (cask claude) and Codex desktop (cask codex-app) apps, then each CLI only when
+  not already available (claude-code, codex), tracked in ai-tools-casks and
+  ai-tools-formulae for undo. Then sign in one tool at a time, but only after a
+  live check shows it is signed out; never ask or open an app that is already
+  signed in. Checks: claude auth status, codex login status (the Codex desktop
+  app shares the CLI's sign-in), and for Claude desktop only whether
+  oauth:tokenCacheV2 in its config.json is non-empty, never printing or reading
+  its value. For a signed-out tool offer Sign in / Skip / Abort (default Abort),
+  run claude auth login / codex login in the terminal or open the desktop app,
+  and verify afterwards. Never handle credentials or save sign-in state; undo
+  removes installs but keeps sign-ins and app data.
 - Reuse `ansible/roles/prezto` for Linux and macOS. Keep clone/submodule/link
   logic shared, and package/login-shell handling in platform wrappers. Default
   target paths to `~`. Run the Mac Prezto playbook after dotfiles; retain existing

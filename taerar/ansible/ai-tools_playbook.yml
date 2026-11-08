@@ -88,6 +88,12 @@
             name: Claude desktop app
             kind: desktop
             app: Claude
+            # The app keeps an encrypted OAuth token cache in its config once
+            # signed in. Only whether it is non-empty is tested; it is never
+            # printed or read further.
+            status: >-
+              "$PY" -c 'import json,os,sys; p=os.path.expanduser("~/Library/Application Support/Claude/config.json");
+              sys.exit(0 if json.load(open(p)).get("oauth:tokenCacheV2") else 1)' 2>/dev/null
           - id: claude_cli
             name: Claude Code CLI
             kind: cli
@@ -100,6 +106,9 @@
             name: Codex desktop app
             kind: desktop
             app: Codex
+            # The Codex app shares its sign-in (~/.codex/auth.json) with the CLI.
+            bin: "{{ ai_tools_install.stdout_lines | select('match', '^codex_cli=') | first | regex_replace('^codex_cli=', '') }}"
+            status: 'out=$("$BIN" login status 2>&1) && [[ "$out" == "Logged in"* ]]'
           - id: codex_cli
             name: Codex CLI
             kind: cli

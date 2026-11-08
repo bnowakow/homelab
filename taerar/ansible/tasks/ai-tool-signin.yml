@@ -1,9 +1,10 @@
-# Signs in to one tool. Expects ai_tool with id, name, kind (cli|desktop) and,
-# for a CLI, bin/status/login shell snippets; for a desktop app, app.
+# Signs in to one tool, but only when it is not already signed in. Expects
+# ai_tool with id, name, kind (cli|desktop), a status shell snippet (exit 0 =
+# signed in) and, for a CLI, bin/login; for a desktop app, app.
 # Passwords and tokens are entered only in the browser or the app, never here.
 - name: Start from a clean state for this tool
   ansible.builtin.set_fact:
-    ai_answer: ''
+    ai_choice: { rc: 0, stdout: '' }
     ai_signed_in: false
 
 - name: "{{ ai_tool.name }}: check whether it is already signed in"
@@ -11,106 +12,109 @@
   args:
     executable: /bin/bash
   environment:
-    BIN: "{{ ai_tool.bin }}"
+    BIN: "{{ ai_tool.bin | default('') }}"
     PY: "{{ ansible_playbook_python }}"
   register: ai_status
   changed_when: false
   failed_when: false
-  when: ai_tool.kind == 'cli'
 
 - name: "{{ ai_tool.name }}: decide whether a sign-in is needed"
   ansible.builtin.set_fact:
-    # A CLI is checked live every run. A desktop app has no status command, so
-    # only an explicitly saved confirmation suppresses its prompt.
-    ai_signed_in: >-
-      {{ (ai_status.rc == 0) if ai_tool.kind == 'cli'
-         else ((provision_saved_answers | default({})).get('ai_tools.' + ai_tool.id, false) == true) }}
+    ai_signed_in: "{{ ai_status.rc == 0 }}"
 
-- name: "{{ ai_tool.name }}: open the app so you can sign in"
-  ansible.builtin.command:
-    argv: [open, -a, "{{ ai_tool.app }}"]
-  changed_when: false
-  when: ai_tool.kind == 'desktop' and not ai_signed_in
-
-- name: "{{ ai_tool.name }}: ask how to proceed"
-  ansible.builtin.shell: |
-    if [ "$KIND" = cli ]; then
-      first_tag=signin
-      first_text="Sign in now (opens your browser; approve it there)"
-      intro="$NAME is not signed in."
-    else
-      first_tag=done
-      first_text="I have signed in to the app"
-      intro="$NAME is open. Sign in in its window, then choose the first option."
-    fi
-    dialog --clear --stdout --cr-wrap --title "Sign in: $NAME" \
-      --ok-label Continue --cancel-label Abort --default-button cancel \
-      --menu "$intro\n\nPasswords are entered only in the browser or the app, never in provisioning." 14 78 2 \
-      "$first_tag" "$first_text" \
-      skip "Skip $NAME for now" \
-      < "$PROVISION_TTY" 2> "$PROVISION_TTY"
-  args:
-    executable: /bin/bash
-  environment:
-    KIND: "{{ ai_tool.kind }}"
-    NAME: "{{ ai_tool.name }}"
-    PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
-    TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
-    DIALOG_ERROR: '70'
-    DIALOG_CANCEL: '1'
-    DIALOG_ESC: '255'
-  register: ai_choice
-  changed_when: false
-  failed_when: false
-  when: not ai_signed_in
-
-- name: "{{ ai_tool.name }}: stop after Abort or a dialog failure"
-  ansible.builtin.fail:
-    msg: >-
-      {{ 'Provisioning aborted at the ' + ai_tool.name + ' sign-in. Installed tools and saved answers remain; rerun provisioning to continue.'
-         if ai_choice.rc in [1, 255] else
-         'Could not show the sign-in dialog. Run provisioning from an interactive Terminal.' }}
-  when: not ai_signed_in and ai_choice.rc != 0
-
-- name: "{{ ai_tool.name }}: run its sign-in"
-  ansible.builtin.shell: "{{ ai_tool.login }} < \"$PROVISION_TTY\" > \"$PROVISION_TTY\" 2>&1"
-  args:
-    executable: /bin/bash
-  environment:
-    BIN: "{{ ai_tool.bin }}"
-    PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
-  register: ai_login
-  changed_when: ai_login.rc == 0
-  failed_when: false
-  when: not ai_signed_in and ai_tool.kind == 'cli' and ai_choice.stdout == 'signin'
-
-- name: "{{ ai_tool.name }}: verify the sign-in"
-  ansible.builtin.shell: "{{ ai_tool.status }}"
-  args:
-    executable: /bin/bash
-  environment:
-    BIN: "{{ ai_tool.bin }}"
-    PY: "{{ ansible_playbook_python }}"
-  register: ai_verify
-  changed_when: false
-  failed_when: false
-  when: not ai_signed_in and ai_tool.kind == 'cli' and ai_choice.stdout == 'signin'
-
-- name: "{{ ai_tool.name }}: stop when the sign-in did not complete"
-  ansible.builtin.fail:
-    msg: >-
-      {{ ai_tool.name }} is still not signed in. Run {{ ai_tool.login | regex_replace('"\$BIN"', ai_tool.bin | basename) }}
-      in Terminal to see why, then rerun provisioning. Earlier steps and saved answers remain.
-  when: not ai_signed_in and ai_tool.kind == 'cli' and ai_choice.stdout == 'signin' and ai_verify.rc != 0
-
-- name: "{{ ai_tool.name }}: remember that you signed in"
-  ansible.builtin.include_tasks: tasks/save-wizard-answer.yml
-  vars:
-    wizard_answer_key: "ai_tools.{{ ai_tool.id }}"
-    wizard_answer_value: true
-  when: not ai_signed_in and ai_tool.kind == 'desktop' and ai_choice.stdout == 'done'
-
-- name: "{{ ai_tool.name }}: report a skipped sign-in"
+- name: "{{ ai_tool.name }}: already signed in"
   ansible.builtin.debug:
-    msg: "Skipped signing in to {{ ai_tool.name }}. Sign in later; provisioning will ask again."
-  when: not ai_signed_in and ai_choice.stdout == 'skip'
+    msg: "{{ ai_tool.name }} is already signed in; nothing to do."
+  when: ai_signed_in
+
+# Everything below runs only for a tool that is not signed in.
+- name: "{{ ai_tool.name }}: sign in"
+  when: not ai_signed_in
+  block:
+    - name: "{{ ai_tool.name }}: open the app so you can sign in"
+      ansible.builtin.command:
+        argv: [open, -a, "{{ ai_tool.app }}"]
+      changed_when: false
+      when: ai_tool.kind == 'desktop'
+
+    - name: "{{ ai_tool.name }}: ask how to proceed"
+      ansible.builtin.shell: |
+        if [ "$KIND" = cli ]; then
+          first_tag=signin
+          first_text="Sign in now (opens your browser; approve it there)"
+          intro="$NAME is not signed in."
+        else
+          first_tag=done
+          first_text="I have signed in to the app"
+          intro="$NAME is not signed in. It is open now: sign in in its window, then choose the first option."
+        fi
+        dialog --clear --stdout --cr-wrap --title "Sign in: $NAME" \
+          --ok-label Continue --cancel-label Abort --default-button cancel \
+          --menu "$intro\n\nPasswords are entered only in the browser or the app, never in provisioning." 14 78 2 \
+          "$first_tag" "$first_text" \
+          skip "Skip $NAME for now" \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        KIND: "{{ ai_tool.kind }}"
+        NAME: "{{ ai_tool.name }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_CANCEL: '1'
+        DIALOG_ESC: '255'
+      register: ai_choice
+      changed_when: false
+      failed_when: false
+
+    - name: "{{ ai_tool.name }}: stop after Abort or a dialog failure"
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Provisioning aborted at the ' + ai_tool.name + ' sign-in. Installed tools remain; rerun provisioning to continue.'
+             if ai_choice.rc in [1, 255] else
+             'Could not show the sign-in dialog. Run provisioning from an interactive Terminal.' }}
+      when: ai_choice.rc != 0
+
+    - name: "{{ ai_tool.name }}: run its sign-in"
+      ansible.builtin.shell: "{{ ai_tool.login }} < \"$PROVISION_TTY\" > \"$PROVISION_TTY\" 2>&1"
+      args:
+        executable: /bin/bash
+      environment:
+        BIN: "{{ ai_tool.bin }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+      changed_when: true
+      failed_when: false
+      when: ai_tool.kind == 'cli' and ai_choice.stdout == 'signin'
+
+    - name: "{{ ai_tool.name }}: verify the sign-in"
+      ansible.builtin.shell: "{{ ai_tool.status }}"
+      args:
+        executable: /bin/bash
+      environment:
+        BIN: "{{ ai_tool.bin | default('') }}"
+        PY: "{{ ansible_playbook_python }}"
+      register: ai_verify
+      changed_when: false
+      failed_when: false
+      when: ai_choice.stdout in ['signin', 'done']
+
+    - name: "{{ ai_tool.name }}: stop when the sign-in did not complete"
+      ansible.builtin.fail:
+        msg: >-
+          {{ ai_tool.name }} is still not signed in. Run {{ ai_tool.login | regex_replace('"\$BIN"', ai_tool.bin | basename) }}
+          in Terminal to see why, then rerun provisioning. Earlier steps remain applied.
+      when: ai_tool.kind == 'cli' and ai_choice.stdout == 'signin' and ai_verify.rc != 0
+
+    # An app's sign-in may take a moment to be written; trust the confirmation.
+    - name: "{{ ai_tool.name }}: warn when the app sign-in is not detected yet"
+      ansible.builtin.debug:
+        msg: >-
+          {{ ai_tool.name }}: sign-in not detected yet. Continuing because you confirmed it;
+          provisioning will check again on the next run.
+      when: ai_tool.kind == 'desktop' and ai_choice.stdout == 'done' and ai_verify.rc != 0
+
+    - name: "{{ ai_tool.name }}: report a skipped sign-in"
+      ansible.builtin.debug:
+        msg: "Skipped signing in to {{ ai_tool.name }}. Sign in later; provisioning will ask again."
+      when: ai_choice.stdout == 'skip'
