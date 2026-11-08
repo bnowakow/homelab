@@ -41,6 +41,7 @@ failed_apps_count=0
 failure_events_count=0
 version_check_error_apps=()
 current_app=""
+declare -A schema_repaired_values=()
 current_app_failed=0
 insecure_hosts=""
 check_summary_title=""
@@ -1055,11 +1056,55 @@ generate_fleet_bundle() {
   return 1
 }
 
+# Returns 0 for no repair, 2 for an approved edit, 1 to stop this app.
+# This known invalid Kubernetes field can be diagnosed before Helm/Fleet fails.
+maybe_repair_values_schema() {
+  local app="$1" fleet_dir="$2"
+  local helper="$script_dir/lib/helm-values-repair.py"
+  local repair_dir repair_plan description diagnostic_status=0
+  [ "$app" = youtubedl-material ] || return 0
+  [ "$dry_run" -eq 0 ] || return 0
+  if [ ! -f "$helper" ]; then
+    return 0
+  fi
+  repair_dir="$(mktemp -d "$log_dir/schema-repair-${app}-XXXXXX")" || return 1
+  chmod 700 "$repair_dir"
+  repair_plan="$repair_dir/plan.json"
+  description="$(/usr/bin/python3 "$helper" --values "$fleet_dir/values.yaml" \
+      --plan "$repair_plan" 2>>"$log_file")" || diagnostic_status=$?
+  [ "$diagnostic_status" -ne 1 ] || return 0
+  if [ "$diagnostic_status" -ne 0 ]; then
+    record_failure_and_maybe_abort "Schema repair requires review ($app)" \
+      "The fsGroup values are invalid or conflicting. See $log_file. No repair was applied."
+    return 1
+  fi
+  # Explicit approval is required even under --yes.
+  if ! dialog --clear --begin 2 10 --defaultno \
+      --title "Repair invalid fsGroup placement ($app)?" \
+      --yes-label "Apply repair" --no-label "Skip repair" \
+      --yesno "$description\n\nBack up and edit $fleet_dir/values.yaml, then continue native Fleet reconciliation with schema validation enabled? The normal chart rollout may restart the application. Values will be staged only after rollout and HTTP postchecks.\n\nBackup and plan: $repair_dir\n\nApply this repair?" 23 112; then
+    log "$app: user declined fsGroup schema repair; no values were changed"
+    return 1
+  fi
+  log "$app: user approved fsGroup schema repair; plan=$repair_plan"
+  if ! /usr/bin/python3 "$helper" --apply "$repair_plan" >>"$log_file" 2>&1; then
+    record_failure_and_maybe_abort "Schema repair failed ($app)" \
+      "Values could not be changed safely. Review $repair_dir and $log_file."
+    return 1
+  fi
+  schema_repaired_values["$app"]="$fleet_dir/values.yaml"
+  log "$app: moved fsGroup to pod scope; original values=$repair_dir/values-before.yaml"
+  return 2
+}
+
 apply_fleet_bundle() {
   local app="$1"
   local fleet_dir="$2"
   local namespace="$3"
   local target_version="$4"
+  local values_schema_repair_status=0
+  maybe_repair_values_schema "$app" "$fleet_dir" || values_schema_repair_status=$?
+  [ "$values_schema_repair_status" -ne 1 ] || return 1
   local bundle_name
   local relative_fleet_dir
   local generated_bundle_file
@@ -2264,6 +2309,10 @@ run_postchecks() {
     log "$app [postcheck]: pod log review accepted" "$(color_blue "$app") [postcheck]: pod log review accepted"
   fi
 
+  if [ -n "${schema_repaired_values[$app]:-}" ]; then
+    stage_fleet_file "${schema_repaired_values[$app]}" || return 1
+    unset 'schema_repaired_values[$app]'
+  fi
   return 0
 }
 

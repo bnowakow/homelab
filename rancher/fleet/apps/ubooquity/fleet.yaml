@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/ubooquity
-  version: 16.0.7
+  version: 16.1.0
   releaseName: ubooquity
   waitForJobs: true
   valuesFiles:

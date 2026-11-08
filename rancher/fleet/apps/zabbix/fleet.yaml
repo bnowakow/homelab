@@ -7,7 +7,7 @@ dependsOn:
 helm:
   chart: zabbix
   repo: https://zabbix-community.github.io/helm-zabbix
-  version: 8.0.0
+  version: 8.0.1
   releaseName: zabbix
   waitForJobs: true
   valuesFiles:

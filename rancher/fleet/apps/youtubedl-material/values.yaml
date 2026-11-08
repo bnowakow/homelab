@@ -25,7 +25,6 @@ persistence:
     path: /mnt/MargokPool/archive/Data/rancher/youtubedl-material/video
     server: nas.localdomain.bnowakowski.pl
     type: nfs
-
 resources:
   limits:
     cpu: 200m
@@ -33,7 +32,6 @@ resources:
   requests:
     cpu: 60m
     memory: 4Gi
-
 workload:
   main:
     replicas: 1
@@ -42,7 +40,7 @@ workload:
       containers:
         main:
           fixedEnv:
-            PUID: "568"
+            PUID: '568'
           probes:
             startup:
               enabled: true
@@ -60,32 +58,30 @@ workload:
                 timeoutSeconds: 5
                 failureThreshold: 5
                 successThreshold: 1
-
 security:
   PUID: 568
-
 securityContext:
   container:
-    fsGroup: 568
     runAsUser: 0
     runAsGroup: 0
     runAsNonRoot: false
     readOnlyRootFilesystem: false
-
+  pod:
+    fsGroup: 568
 ingress:
   main:
     enabled: true
     primary: true
     ingressClassName: traefik
     hosts:
-      - host: youtubedl-material.rancher.tailscale.bnowakowski.pl
-        paths:
-          - path: /
-            pathType: Prefix
-      - host: youtubedl-material.rancher.localdomain.bnowakowski.pl
-        paths:
-          - path: /
-            pathType: Prefix
+    - host: youtubedl-material.rancher.tailscale.bnowakowski.pl
+      paths:
+      - path: /
+        pathType: Prefix
+    - host: youtubedl-material.rancher.localdomain.bnowakowski.pl
+      paths:
+      - path: /
+        pathType: Prefix
     integrations:
       certManager:
         enabled: true
@@ -93,10 +89,8 @@ ingress:
       traefik:
         enabled: true
         entrypoints:
-          - websecure
+        - websecure
         forceTLS: true
-
-# Move MongoDB and app state together; one database writer.
 mongodb:
   persistence:
     data:
