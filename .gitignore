@@ -26,3 +26,7 @@ tmp-sudo-password
 
 # Local macOS provisioning wizard choices
 /taerar/ansible/time-machine-choices.json
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]

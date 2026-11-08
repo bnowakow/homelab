@@ -81,6 +81,9 @@
         major_choice=1
         manual_version=
         version_error=
+        chosen_version=
+        copy_back=major
+        copy_choice=
         cancel_wizard() {
           printf '{"action":"cancelled","create_type":null,"version_type":null,"computer_index":null,"cancelled_at":"%s"}\n' "$screen"
           exit 0
@@ -165,6 +168,7 @@
         print(json.dumps(json.loads(os.environ["COMPUTERS_JSON"])[int(sys.argv[1]) - 1]["name"]))
         ' "$selection")
               {{ ansible_playbook_python | quote }} {{ (playbook_dir + '/files/wizard_choices.py') | quote }} "$CHOICES_FILE" put time_machine.computer "$selected_name"
+              if [[ "$computer_choice" != "$selection" ]]; then copy_choice=; fi
               computer_choice=$selection
               screen=version
               ;;
@@ -227,12 +231,10 @@
                 "$CHOICES_FILE" put time_machine.major "{\"source\":\"$source\",\"version\":$number}"
               major_choice=$selection
               case "$selection" in
-                1) chosen_version=$proposed_version ;;
+                1) chosen_version=$proposed_version; copy_back=major; screen=copy; continue ;;
                 2) screen=manual; continue ;;
                 *) echo 'Invalid major version choice.' >&2; exit 2 ;;
               esac
-              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"%s","version":"%s"}\n' "$computer_choice" "$version_type" "$chosen_version"
-              exit 0
               ;;
             manual)
               printf -v message 'Computers on the Time Machine share:\n\n%s\n\nEnter a version as major.minor (for example %s).\n\nType to edit the version.\nAfter editing, press Tab to focus Continue, then Enter.\n%s' "$selected_inventory" "$proposed_version" "$version_error"
@@ -266,7 +268,60 @@
               {{ ansible_playbook_python | quote }} {{ (playbook_dir + '/files/wizard_choices.py') | quote }} \
                 "$CHOICES_FILE" put time_machine.major "{\"source\":\"manual\",\"version\":\"$selection\"}"
               record_choice "$selection"
-              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"%s","version":"%s"}\n' "$computer_choice" "$version_type" "$selection"
+              chosen_version=$selection
+              copy_back=manual
+              screen=copy
+              ;;
+            copy)
+              # Tags are the stored semantic values: none, unversioned or a version.
+              copy_options=()
+              while IFS= read -r -d '' item; do copy_options+=("$item"); done < <({{ ansible_playbook_python | quote }} -c '
+        import json, os, sys
+        computer = json.loads(os.environ["COMPUTERS_JSON"])[int(sys.argv[1]) - 1]
+        name = "".join(c if c.isprintable() else "?" for c in computer["name"])
+        sources = ["none"] + (["unversioned"] if computer["unversioned"] else []) + computer["versions"]
+        # First the prompt, then the newest source to highlight, then menu tag/label pairs.
+        items = ["Copy data into the new version " + sys.argv[2] + " from an existing version of " + name + "?",
+                 sources[-1], "none", "Do not copy data (start with an empty backup)"]
+        if computer["unversioned"]:
+            items += ["unversioned", "Copy data from " + name + " (unversioned backup)"]
+        for version in computer["versions"]:
+            items += [version, "Copy data from " + name + " " + version]
+        sys.stdout.write("".join(item + chr(0) for item in items))
+        ' "$computer_choice" "$chosen_version")
+              copy_prompt=${copy_options[0]}
+              # Highlight the newest existing version; Abort remains the default button.
+              if [[ -z "$copy_choice" ]]; then copy_choice=${copy_options[1]}; fi
+              copy_options=("${copy_options[@]:2}")
+              valid_copy=false
+              if [[ -n "$cached_selection" ]]; then
+                for i in "${!copy_options[@]}"; do
+                  if (( i % 2 == 0 )) && [[ "${copy_options[$i]}" == "$cached_selection" ]]; then valid_copy=true; fi
+                done
+                # A saved source that no longer exists on the share is asked again.
+                if [[ "$valid_copy" != true ]]; then replaying=false; continue; fi
+              fi
+              if selection=$(computer_menu "New $version_type version $chosen_version: copy data" \
+                "$copy_prompt" true "$copy_choice" "$selected_inventory" "${copy_options[@]}"); then
+                status=0
+              else
+                status=$?
+              fi
+              case "$status" in
+                3) screen=$copy_back; continue ;;
+                1|255) cancel_wizard ;;
+                0) ;;
+                *) exit "$status" ;;
+              esac
+              valid_copy=false
+              for i in "${!copy_options[@]}"; do
+                if (( i % 2 == 0 )) && [[ "${copy_options[$i]}" == "$selection" ]]; then valid_copy=true; fi
+              done
+              if [[ "$valid_copy" != true ]]; then echo 'Invalid copy source.' >&2; exit 2; fi
+              record_choice "$selection"
+              copy_choice=$selection
+              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"%s","version":"%s","copy_from":"%s"}\n' \
+                "$computer_choice" "$version_type" "$chosen_version" "$selection"
               exit 0
               ;;
           esac
@@ -316,6 +371,7 @@
         time_machine_computer: null
         time_machine_version_type: null
         time_machine_version: null
+        time_machine_copy_from: null
       when: (time_machine_selection.stdout | from_json).action == 'cancelled'
 
     - name: End the wizard cleanly after Abort or Escape
@@ -343,6 +399,18 @@
         fail_msg: No valid existing computer was selected.
       when: (time_machine_selection.stdout | from_json).create_type == 'new_version'
 
+    - name: Validate the version to copy data from
+      vars:
+        selected_computer: "{{ time_machine_selectable_computers[(time_machine_selection.stdout | from_json).computer_index - 1] }}"
+        copy_from: "{{ (time_machine_selection.stdout | from_json).copy_from }}"
+      ansible.builtin.assert:
+        that:
+          - >-
+            copy_from == 'none' or copy_from in selected_computer.versions or
+            (copy_from == 'unversioned' and selected_computer.unversioned)
+        fail_msg: No valid version to copy data from was selected.
+      when: (time_machine_selection.stdout | from_json).create_type == 'new_version'
+
     - name: Keep the selection available for subsequent setup steps
       ansible.builtin.set_fact:
         time_machine_action: "{{ (time_machine_selection.stdout | from_json).action }}"
@@ -352,6 +420,8 @@
              if (time_machine_selection.stdout | from_json).create_type == 'new_version' else none }}
         time_machine_version_type: "{{ (time_machine_selection.stdout | from_json).version_type }}"
         time_machine_version: "{{ (time_machine_selection.stdout | from_json).version | default(none) }}"
+        # none = start empty; unversioned or a version number = copy from that backup.
+        time_machine_copy_from: "{{ (time_machine_selection.stdout | from_json).copy_from | default(none) }}"
         time_machine_computers: "{{ (time_machine_inventory.stdout | from_json).computers }}"
 
     - name: Explain that restoring an existing computer is not implemented yet
@@ -361,8 +431,20 @@
 
     - name: Explain that a completely new computer is not implemented yet
       ansible.builtin.debug:
-        msg: 'TODO: New computer will be implemented later. No computer or backup has been created.'
+        msg: >-
+          TODO: New computer will be implemented later, including asking which computer
+          and then which of its versions to copy data from (or none). No computer or
+          backup has been created.
       when: time_machine_create_type == 'new_computer'
+
+    - name: Explain that copying data into the new version is not implemented yet
+      ansible.builtin.debug:
+        msg: >-
+          TODO: Copying data from {{ time_machine_computer }}
+          {{ '(unversioned backup)' if time_machine_copy_from == 'unversioned' else time_machine_copy_from }}
+          into {{ time_machine_computer }} {{ time_machine_version }} will be implemented
+          later. The choice is saved; no backup has been copied or modified.
+      when: time_machine_copy_from not in [none, 'none']
 
     - name: Explain that a new minor version is not implemented yet
       ansible.builtin.debug:
@@ -379,4 +461,5 @@
           computer: "{{ time_machine_computer }}"
           version_type: "{{ time_machine_version_type }}"
           version: "{{ time_machine_version }}"
-      when: time_machine_version_type in ['major', 'minor'] and time_machine_version != none
+          copy_from: "{{ time_machine_copy_from }}"
+      when: time_machine_version_type in ['major', 'minor'] and time_machine_version != none and time_machine_copy_from != none

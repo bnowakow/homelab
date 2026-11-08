@@ -394,6 +394,30 @@ other than the proposal; it need not exceed the existing maximum. The chosen
 number is held in `time_machine_version` (null for other paths or cancellation).
 No backup is created or renamed yet.
 
+After the version number is accepted (suggested or manual), a last screen asks
+whether to copy data into the new version from an existing backup. It shows
+the selected computer and its versions above these choices:
+
+1. Do not copy data (start with an empty backup).
+2. One **Copy data from** row for each existing version of that computer,
+   including an unversioned backup if one exists (for example **Copy data from
+   Taerar 7.5**).
+
+The newest existing version is highlighted, but Abort remains the default
+button. **Back** returns to the screen where the version number was accepted
+(the proposal menu or the manual input). The choice is held in
+`time_machine_copy_from`: `none`, `unversioned` or a version such as `7.5`
+(null for other paths and cancellation). It is saved as
+`answers["time_machine.copy"]` and in `time_machine.result.copy_from`. If a
+saved source no longer exists on the share, the question is asked again.
+**TODO: copying the data is not implemented yet**; this step only records the
+choice and does not read, copy or modify any backup.
+
+**TODO:** when **New computer** is implemented, ask the same copy question,
+but first pick a computer from the share and then one of that computer's
+versions (or no copy). Only the **New version of existing computer** path asks
+it today.
+
 The selected mode (`time_machine_action`: `create` or `restore`), create subtype
 (`time_machine_create_type`: `new_computer`, `new_version`, or null for restore),
 the selected existing name (`time_machine_computer`, null for other paths),
@@ -426,6 +450,9 @@ verification. Passwords, tokens and private keys are never saved. Finder is not
 prompted again when its confirmation is reused; the Time Machine inventory is
 still read if its selection is incomplete. A completed Time Machine selection
 restores its facts without rescanning or recomputing its version proposal.
+A completed selection saved before the copy question existed has no
+`copy_from`; reusing it reruns the wizard, replays the saved answers, and asks
+only the copy question.
 Changing an earlier Time Machine choice clears dependent saved choices. Computer
 selections use stable names rather than inventory indexes.
 

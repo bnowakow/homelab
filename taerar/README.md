@@ -25,7 +25,8 @@ role, then installs GitHub CLI, opens browser login, switches
 origin to SSH, and installs missing tools used by the root Makefile targets.
 Ansible then guides Finder connection to the NAS Time Machine share and computer/
 version selection. Both minor and major paths offer suggested or manual version
-numbers; backup creation and restoration are still TODO.
+numbers, then ask whether to copy data from an existing version of that
+computer. Backup creation, copying and restoration are still TODO.
 
 Accepted wizard answers are saved immediately to the Git-ignored
 `taerar/ansible/time-machine-choices.json`. Before the 1Password stage, reruns show

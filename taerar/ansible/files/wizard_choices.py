@@ -77,7 +77,25 @@ def load(path):
                 or not isinstance(result.get("version"), str)
                 or not re.fullmatch(r"[0-9]+\.[0-9]+", result["version"])):
             raise ValueError("Invalid completed Time Machine selection")
+    # Results saved before the copy question existed have no copy_from.
+    for value in [answers.get("time_machine.copy"),
+                  answers.get("time_machine.result", {}).get("copy_from", None)]:
+        if value is not None and not valid_copy_source(value):
+            raise ValueError("Invalid version to copy data from")
     return data
+
+
+def valid_copy_source(value):
+    return isinstance(value, str) and (value in ["none", "unversioned"]
+                                       or re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", value) is not None)
+
+
+def copy_source_label(value):
+    if value == "none":
+        return "Do not copy data (start with an empty backup)"
+    if value == "unversioned":
+        return "Copy from the unversioned backup"
+    return "Copy from version " + value
 
 
 def save(path, data):
@@ -106,6 +124,7 @@ def format_summary(answers):
         "time_machine.version": "Version type",
         "time_machine.major": "Version selection",
         "time_machine.manual": "Manually entered version",
+        "time_machine.copy": "Copy data from",
     }
     meanings = {"create": "Create a new computer or version", "restore": "Restore an existing computer",
                 "new_version": "New version of an existing computer", "new_computer": "Entirely new computer",
@@ -118,6 +137,8 @@ def format_summary(answers):
         if key == "time_machine.major" and isinstance(value, dict):
             source = "Suggested version" if value.get("source") == "suggested" else "Manual version"
             rendered = source + (": " + value["version"] if value.get("version") else " (number not recorded in older file)")
+        elif key == "time_machine.copy":
+            rendered = copy_source_label(value)
         elif value is True:
             rendered = "Confirmed"
         elif isinstance(value, str):
@@ -129,6 +150,8 @@ def format_summary(answers):
     for field, key in [("action", "action"), ("create_type", "create"), ("computer", "computer"), ("version_type", "version")]:
         if field in result and "time_machine." + key not in answers:
             rows.append((labels["time_machine." + key], meanings.get(result[field], result[field])))
+    if "copy_from" in result and "time_machine.copy" not in answers:
+        rows.append((labels["time_machine.copy"], copy_source_label(result["copy_from"])))
     source = answers.get("time_machine.major", {})
     number = (answers.get("time_machine.number") or result.get("version")
               or (source.get("version") if isinstance(source, dict) else None)
@@ -154,7 +177,7 @@ def main():
         if step in MENU_VALUES and isinstance(value, str):
             value = MENU_VALUES[step].get(value, value)
         # Changing an earlier Time Machine answer invalidates dependent answers.
-        order = ["action", "create", "computer", "version", "major", "manual"]
+        order = ["action", "create", "computer", "version", "major", "manual", "copy"]
         step = key.removeprefix("time_machine.")
         if step in order and data["answers"].get(key) != value:
             for later in order[order.index(step) + 1:] + ["result", "number"]:

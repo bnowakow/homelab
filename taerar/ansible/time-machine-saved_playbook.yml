@@ -121,4 +121,9 @@
         time_machine_computer: "{{ provision_saved_answers['time_machine.result'].computer }}"
         time_machine_version_type: "{{ provision_saved_answers['time_machine.result'].version_type }}"
         time_machine_version: "{{ provision_saved_answers['time_machine.result'].version }}"
-      when: "'time_machine.result' in provision_saved_answers"
+        time_machine_copy_from: "{{ provision_saved_answers['time_machine.result'].copy_from }}"
+      # A result saved before the copy-source question existed is incomplete:
+      # rerun the wizard, which replays saved steps and asks only the new question.
+      when: >-
+        'time_machine.result' in provision_saved_answers and
+        'copy_from' in provision_saved_answers['time_machine.result']

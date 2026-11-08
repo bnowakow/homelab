@@ -148,6 +148,14 @@
   or authentication checks; never store credentials. Future questions belong in
   a stage outside the completed-Time-Machine skip so reuse cannot hide them.
 - Label every ncurses cancellation/exit choice Abort, never Stop or Exit.
+- After a new version number is accepted, ask last whether to copy data from an
+  existing version of the selected computer: "none" or one row per existing
+  version (including unversioned). Store the semantic value in time_machine.copy
+  and result.copy_from; re-ask if the saved source no longer exists. Back returns
+  to the proposal or manual screen. Treat a saved result without copy_from as
+  incomplete so reuse still asks it. Copying itself remains TODO; never read or
+  modify bundles. TODO for New computer: ask the same question after picking a
+  source computer, then one of its versions.
 
 - Display saved-answer summaries as aligned key/value columns, one answer per
   line. Use the shared format_summary() helper, including for future question IDs.
