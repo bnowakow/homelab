@@ -49,6 +49,8 @@ def main():
         print("Cannot read Time Machine share. Connect it in Finder before continuing: "
               + str(error), file=sys.stderr)
         return 1
+    for computer in computers:
+        computer["display"] = format_computers([computer])
     print(json.dumps({"computers": computers, "display": format_computers(computers)}))
     return 0
 

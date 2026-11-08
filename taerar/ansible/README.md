@@ -293,10 +293,10 @@ without that suffix (e.g. `Jakku.sparsebundle`) are unversioned. Versions sort
 numerically, so 7.10 follows 7.5. If both exist, an unversioned entry is listed
 alongside the versions.
 
-The dialog shows the complete computer/version list above these options:
-
-The reusable `computer_menu()` function renders the inventory identically on
-all screens. Computer names and versions have bullets, with each version on its
+The first dialog shows the complete computer/version list above its options.
+The reusable `computer_menu()` function keeps the layout consistent on all
+screens, using the shared Python `format_computers()` formatter for both the
+full inventory and the selected-computer view. Computer names and versions have bullets, with each version on its
 own tab-indented line beneath its computer, for example:
 
 ```text
@@ -338,9 +338,25 @@ It uses **Continue**, **Abort**, and **Back**, defaulting to Abort. Back returns
 to the create-subtype screen with New version still selected; its own Back
 returns to the first screen. If no computers exist, you can go Back or Abort.
 
+After choosing a computer, the next screen shows only that computer and its
+versions, with these choices:
+
+1. New minor version (e.g. new macOS version or existing computer from scratch).
+2. New major version (e.g. newly bought computer).
+
+Minor comes first because reinstalling or upgrading macOS is more common than
+replacing the computer.
+
+Continue records the choice; Back returns to the computer picker with the
+previous computer selected. Minor is initially highlighted, while Abort remains
+the default button. This screen only collects
+the version type; creating or numbering a backup will be implemented later.
+
 The selected mode (`time_machine_action`: `create` or `restore`), create subtype
 (`time_machine_create_type`: `new_computer`, `new_version`, or null for restore),
 the selected existing name (`time_machine_computer`, null for other paths),
+version type (`time_machine_version_type`: `major`, `minor`, or null for other
+paths and cancellation),
 and inventory are held as Ansible facts for subsequent tasks in this playbook. This step does not create computers,
 restore data, modify backup bundles, or persist a selection, so undo has nothing
 to reverse. Actual create/restore steps will be added separately.

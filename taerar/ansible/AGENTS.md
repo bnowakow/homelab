@@ -104,6 +104,12 @@
   subsequent wizard screen, default Abort, and Back to the immediately previous
   screen while preserving its choice. Keep selections in memory; no backup
   modifications until the corresponding implementation is requested.
+- After picking an existing computer, show only that computer and its versions
+  above Minor (new macOS or fresh installation) / Major (new hardware) choices,
+  in that order because minor versions are more common.
+  Reuse the shared formatter and renderer, retain Continue/Abort/Back with Abort
+  default, and return Back to the computer picker preserving its selection.
+  Keep version type as an in-memory fact; do not create or number backups yet.
 - Record changes in `~/.homelab-provision-state` outside the checkout. Track only
   resources created or modified by provisioning; preserve pre-existing resources.
   Record intent before operations that can partially fail and keep markers until

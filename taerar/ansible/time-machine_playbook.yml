@@ -36,15 +36,15 @@
         fi
         # One renderer keeps the inventory, layout and buttons consistent.
         computer_menu() {
-          local title=$1 prompt=$2 allow_back=$3 default_item=$4 message
-          shift 4
+          local title=$1 prompt=$2 allow_back=$3 default_item=$4 inventory=$5 message
+          shift 5
           local options=(--clear --stdout --no-collapse --cr-wrap --tab-len 4
             --title "$title" --ok-label 'Continue' --cancel-label 'Abort'
             --default-button cancel --default-item "$default_item")
           if [[ "$allow_back" == true ]]; then
             options+=(--extra-button --extra-label 'Back')
           fi
-          printf -v message 'Computers on the Time Machine share:\n\n%s\n\n%s' "$COMPUTER_LIST" "$prompt"
+          printf -v message 'Computers on the Time Machine share:\n\n%s\n\n%s' "$inventory" "$prompt"
           dialog "${options[@]}" --menu "$message" 0 0 "$(( $# / 2 ))" "$@" \
             < "$PROVISION_TTY" 2> "$PROVISION_TTY"
         }
@@ -67,13 +67,13 @@
         create_choice=1
         computer_choice=1
         cancel_wizard() {
-          printf '{"action":"cancelled","create_type":null,"computer_index":null,"cancelled_at":"%s"}\n' "$screen"
+          printf '{"action":"cancelled","create_type":null,"version_type":null,"computer_index":null,"cancelled_at":"%s"}\n' "$screen"
           exit 0
         }
         while true; do
           case "$screen" in
             action)
-              if selection=$(computer_menu 'Time Machine computers' 'Choose what you want to do:' false 1 \
+              if selection=$(computer_menu 'Time Machine computers' 'Choose what you want to do:' false 1 "$COMPUTER_LIST" \
                 1 'Create a new computer (new computer or new version of existing computer)' \
                 2 "Restore existing computer (doesn't create a new version of existing computer)"); then
                 :
@@ -85,13 +85,13 @@
                 esac
               fi
               case "$selection" in
-                2) printf '%s\n' '{"action":"restore","create_type":null,"computer_index":null}'; exit 0 ;;
+                2) printf '%s\n' '{"action":"restore","create_type":null,"version_type":null,"computer_index":null}'; exit 0 ;;
                 1) screen=create ;;
                 *) echo 'Invalid Time Machine action.' >&2; exit 2 ;;
               esac
               ;;
             create)
-              if selection=$(computer_menu 'Create a new computer' 'Choose the type of new computer:' true "$create_choice" \
+              if selection=$(computer_menu 'Create a new computer' 'Choose the type of new computer:' true "$create_choice" "$COMPUTER_LIST" \
                 1 'New version of existing computer (exists in the list above)' \
                 2 'New computer (not existing in the list above)'); then
                 status=0
@@ -107,13 +107,13 @@
               create_choice=$selection
               case "$selection" in
                 1) screen=computer ;;
-                2) printf '%s\n' '{"action":"create","create_type":"new_computer","computer_index":null}'; exit 0 ;;
+                2) printf '%s\n' '{"action":"create","create_type":"new_computer","version_type":null,"computer_index":null}'; exit 0 ;;
                 *) echo 'Invalid create subtype.' >&2; exit 2 ;;
               esac
               ;;
             computer)
               if selection=$(computer_menu 'New version: choose an existing computer' \
-                'Choose the computer to create a new version of (names only):' true "$computer_choice" \
+                'Choose the computer to create a new version of (names only):' true "$computer_choice" "$COMPUTER_LIST" \
                 "${computer_options[@]}"); then
                 status=0
               else
@@ -131,7 +131,33 @@
                 exit 2
               fi
               computer_choice=$selection
-              printf '{"action":"create","create_type":"new_version","computer_index":%s}\n' "$selection"
+              screen=version
+              ;;
+            version)
+              selected_inventory=$({{ ansible_playbook_python | quote }} -c '
+        import json, os, sys
+        print(json.loads(os.environ["COMPUTERS_JSON"])[int(sys.argv[1]) - 1]["display"])
+        ' "$computer_choice")
+              if selection=$(computer_menu 'New version: choose major or minor' \
+                'Choose the type of new version:' true 1 "$selected_inventory" \
+                1 'New minor version (e.g. new macOS version or existing computer from scratch)' \
+                2 'New major version (e.g. newly bought computer)'); then
+                status=0
+              else
+                status=$?
+              fi
+              case "$status" in
+                3) screen=computer; continue ;;
+                1|255) cancel_wizard ;;
+                0) ;;
+                *) exit "$status" ;;
+              esac
+              case "$selection" in
+                1) version_type=minor ;;
+                2) version_type=major ;;
+                *) echo 'Invalid version type.' >&2; exit 2 ;;
+              esac
+              printf '{"action":"create","create_type":"new_version","computer_index":%s,"version_type":"%s"}\n' "$computer_choice" "$version_type"
               exit 0
               ;;
           esac
@@ -175,6 +201,7 @@
         time_machine_action: cancelled
         time_machine_create_type: null
         time_machine_computer: null
+        time_machine_version_type: null
       when: (time_machine_selection.stdout | from_json).action == 'cancelled'
 
     - name: End the wizard cleanly after Abort or Escape
@@ -195,6 +222,7 @@
     - name: Validate the selected computer for a new version
       ansible.builtin.assert:
         that:
+          - (time_machine_selection.stdout | from_json).version_type in ['major', 'minor']
           - (time_machine_selection.stdout | from_json).computer_index is integer
           - (time_machine_selection.stdout | from_json).computer_index > 0
           - (time_machine_selection.stdout | from_json).computer_index <= (time_machine_inventory.stdout | from_json).computers | length
@@ -208,6 +236,7 @@
         time_machine_computer: >-
           {{ time_machine_selectable_computers[(time_machine_selection.stdout | from_json).computer_index - 1].name
              if (time_machine_selection.stdout | from_json).create_type == 'new_version' else none }}
+        time_machine_version_type: "{{ (time_machine_selection.stdout | from_json).version_type }}"
         time_machine_computers: "{{ (time_machine_inventory.stdout | from_json).computers }}"
 
     - name: Explain that restoring an existing computer is not implemented yet
