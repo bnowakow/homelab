@@ -7,7 +7,7 @@ dependsOn:
 helm:
   chart: profilarr
   repo: https://media-servarr.shw.al/charts
-  version: 2.5.0
+  version: 2.7.0
   releaseName: profilarr
   waitForJobs: true
   valuesFiles:

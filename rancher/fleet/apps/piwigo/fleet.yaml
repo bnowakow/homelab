@@ -4,7 +4,7 @@ dependsOn:
 - name: piwigo-storage
 helm:
   chart: oci://oci.trueforge.org/truecharts/piwigo
-  version: 22.1.0
+  version: 22.1.2
   releaseName: piwigo
   waitForJobs: true
   valuesFiles:

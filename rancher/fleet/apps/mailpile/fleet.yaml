@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/mailpile
-  version: 10.1.0
+  version: 10.1.2
   releaseName: mailpile
   waitForJobs: true
   valuesFiles:
