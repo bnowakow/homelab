@@ -44,6 +44,8 @@ ingress:
   main:
     enabled: true
     primary: true
+    annotations:
+      helm-upgrade.bnowakowski.pl/check-path: /ping
     ingressClassName: traefik
     hosts:
     - host: whisparr.rancher.tailscale.bnowakowski.pl
@@ -67,3 +69,13 @@ workload:
   main:
     replicas: 1
     strategy: Recreate
+    podSpec:
+      containers:
+        main:
+          probes:
+            # The chart's default exec probe calls /api/v3/stable/status,
+            # which Whisparr v3 answers with 404, so the container was
+            # killed every ~2.5 minutes. /ping returns 200 without an API key.
+            liveness:
+              type: http
+              path: /ping
