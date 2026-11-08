@@ -20,11 +20,11 @@
         set -euo pipefail
         # One renderer keeps the inventory, layout and buttons consistent.
         computer_menu() {
-          local title=$1 prompt=$2 allow_back=$3 message
-          shift 3
+          local title=$1 prompt=$2 allow_back=$3 default_item=$4 message
+          shift 4
           local options=(--clear --stdout --no-collapse --cr-wrap --tab-len 4
             --title "$title" --ok-label 'Continue' --cancel-label 'Abort'
-            --default-button cancel --default-item 1)
+            --default-button cancel --default-item "$default_item")
           if [[ "$allow_back" == true ]]; then
             options+=(--extra-button --extra-label 'Back')
           fi
@@ -32,45 +32,134 @@
           dialog "${options[@]}" --menu "$message" 0 0 "$(( $# / 2 ))" "$@" \
             < "$PROVISION_TTY" 2> "$PROVISION_TTY"
         }
+        computer_options=()
+        computer_count=0
+        # NUL delimiters preserve spaces and punctuation without shell evaluation.
+        while IFS= read -r -d '' name; do
+          computer_count=$((computer_count + 1))
+          computer_options+=("$computer_count" "$name")
+        done < <({{ ansible_playbook_python | quote }} -c '
+        import json, os, sys
+        for item in json.loads(os.environ["COMPUTERS_JSON"]):
+            name = "".join(c if c.isprintable() else "?" for c in item["name"])
+            sys.stdout.write(name + chr(0))
+        ')
+        if [[ "$computer_count" == 0 ]]; then
+          computer_options=(none 'No computers available. Choose Back or Abort.')
+        fi
+        screen=action
+        create_choice=1
+        computer_choice=1
+        cancel_wizard() {
+          printf '{"action":"cancelled","create_type":null,"computer_index":null,"cancelled_at":"%s"}\n' "$screen"
+          exit 0
+        }
         while true; do
-          if action=$(computer_menu 'Time Machine computers' 'Choose what you want to do:' false \
-            1 'Create a new computer (new computer or new version of existing computer)' \
-            2 "Restore existing computer (doesn't create a new version of existing computer)"); then
-            :
-          else
-            exit "$?"
-          fi
-          case "$action" in
-            2) printf '%s\n' '{"action":"restore","create_type":null}'; exit 0 ;;
-            1) ;;
-            *) echo 'Invalid Time Machine action.' >&2; exit 2 ;;
-          esac
-          if create_type=$(computer_menu 'Create a new computer' 'Choose the type of new computer:' true \
-            1 'New computer (not existing in the list above)' \
-            2 'New version of existing computer (exists in the list above)'); then
-            status=0
-          else
-            status=$?
-          fi
-          case "$status" in
-            3) continue ;; # Back returns to the previous menu, not to Abort.
-            0) ;;
-            *) exit "$status" ;;
-          esac
-          case "$create_type" in
-            1) printf '%s\n' '{"action":"create","create_type":"new_computer"}'; exit 0 ;;
-            2) printf '%s\n' '{"action":"create","create_type":"new_version"}'; exit 0 ;;
-            *) echo 'Invalid create subtype.' >&2; exit 2 ;;
+          case "$screen" in
+            action)
+              if selection=$(computer_menu 'Time Machine computers' 'Choose what you want to do:' false 1 \
+                1 'Create a new computer (new computer or new version of existing computer)' \
+                2 "Restore existing computer (doesn't create a new version of existing computer)"); then
+                :
+              else
+                status=$?
+                case "$status" in
+                  1|255) cancel_wizard ;;
+                  *) exit "$status" ;;
+                esac
+              fi
+              case "$selection" in
+                2) printf '%s\n' '{"action":"restore","create_type":null,"computer_index":null}'; exit 0 ;;
+                1) screen=create ;;
+                *) echo 'Invalid Time Machine action.' >&2; exit 2 ;;
+              esac
+              ;;
+            create)
+              if selection=$(computer_menu 'Create a new computer' 'Choose the type of new computer:' true "$create_choice" \
+                1 'New computer (not existing in the list above)' \
+                2 'New version of existing computer (exists in the list above)'); then
+                status=0
+              else
+                status=$?
+              fi
+              case "$status" in
+                3) screen=action; continue ;;
+                1|255) cancel_wizard ;;
+                0) ;;
+                *) exit "$status" ;;
+              esac
+              create_choice=$selection
+              case "$selection" in
+                1) printf '%s\n' '{"action":"create","create_type":"new_computer","computer_index":null}'; exit 0 ;;
+                2) screen=computer ;;
+                *) echo 'Invalid create subtype.' >&2; exit 2 ;;
+              esac
+              ;;
+            computer)
+              if selection=$(computer_menu 'New version: choose an existing computer' \
+                'Choose the computer to create a new version of (names only):' true "$computer_choice" \
+                "${computer_options[@]}"); then
+                status=0
+              else
+                status=$?
+              fi
+              case "$status" in
+                3) screen=create; continue ;;
+                1|255) cancel_wizard ;;
+                0) ;;
+                *) exit "$status" ;;
+              esac
+              if [[ "$computer_count" == 0 && "$selection" == none ]]; then continue; fi
+              if [[ ! "$selection" =~ ^[1-9][0-9]*$ ]] || [[ "$selection" -gt "$computer_count" ]]; then
+                echo 'Invalid computer selection.' >&2
+                exit 2
+              fi
+              computer_choice=$selection
+              printf '{"action":"create","create_type":"new_version","computer_index":%s}\n' "$selection"
+              exit 0
+              ;;
           esac
         done
       args:
         executable: /bin/bash
       environment:
+        # dialog otherwise uses 255 for both internal errors and Escape.
+        DIALOG_ERROR: '70'
+        COMPUTERS_JSON: "{{ (time_machine_inventory.stdout | from_json).computers | to_json }}"
         COMPUTER_LIST: "{{ (time_machine_inventory.stdout | from_json).display }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
         TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
       register: time_machine_selection
       changed_when: false
+      failed_when: false
+
+    - name: Explain a real dialog failure without dumping the wizard script
+      ansible.builtin.fail:
+        msg: >-
+          The Time Machine dialog could not run (exit code {{ time_machine_selection.rc }}).
+          Run provisioning from an interactive Terminal and check its size and TERM setting.
+          No Time Machine data was changed. Earlier provisioning steps remain applied.
+          {{ time_machine_selection.stderr | default('') | trim }}
+      when: time_machine_selection.rc != 0
+
+    - name: Explain cancellation
+      ansible.builtin.debug:
+        msg: >-
+          Time Machine setup cancelled. Abort is the default button; pressing Enter
+          without choosing Continue cancels. No Time Machine data was changed.
+          Earlier provisioning steps remain applied.
+      when: (time_machine_selection.stdout | from_json).action == 'cancelled'
+
+    - name: Keep cancellation explicit for later consumers
+      ansible.builtin.set_fact:
+        time_machine_action: cancelled
+        time_machine_create_type: null
+        time_machine_computer: null
+      when: (time_machine_selection.stdout | from_json).action == 'cancelled'
+
+    - name: End the wizard cleanly after Abort or Escape
+      ansible.builtin.meta: end_play
+      when: (time_machine_selection.stdout | from_json).action == 'cancelled'
 
     - name: Validate the selected action and create subtype
       ansible.builtin.assert:
@@ -83,13 +172,30 @@
              (time_machine_selection.stdout | from_json).create_type == none)
         fail_msg: No valid Time Machine action/create subtype was selected.
 
+    - name: Validate the selected computer for a new version
+      ansible.builtin.assert:
+        that:
+          - (time_machine_selection.stdout | from_json).computer_index is integer
+          - (time_machine_selection.stdout | from_json).computer_index > 0
+          - (time_machine_selection.stdout | from_json).computer_index <= (time_machine_inventory.stdout | from_json).computers | length
+        fail_msg: No valid existing computer was selected.
+      when: (time_machine_selection.stdout | from_json).create_type == 'new_version'
+
     - name: Keep the selection available for subsequent setup steps
       ansible.builtin.set_fact:
         time_machine_action: "{{ (time_machine_selection.stdout | from_json).action }}"
         time_machine_create_type: "{{ (time_machine_selection.stdout | from_json).create_type }}"
+        time_machine_computer: >-
+          {{ (time_machine_inventory.stdout | from_json).computers[(time_machine_selection.stdout | from_json).computer_index - 1].name
+             if (time_machine_selection.stdout | from_json).create_type == 'new_version' else none }}
         time_machine_computers: "{{ (time_machine_inventory.stdout | from_json).computers }}"
 
     - name: Explain that restoring an existing computer is not implemented yet
       ansible.builtin.debug:
         msg: 'TODO: Restore existing computer will be implemented later. No restore has been performed.'
       when: time_machine_action == 'restore'
+
+    - name: Explain that a completely new computer is not implemented yet
+      ansible.builtin.debug:
+        msg: 'TODO: New computer will be implemented later. No computer or backup has been created.'
+      when: time_machine_create_type == 'new_computer'

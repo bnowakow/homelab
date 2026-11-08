@@ -3,6 +3,10 @@
 - All interactive dialogs must default to Abort/Stop/Exit, never Select or
   Continue. Use --defaultno for yes/no checkpoints and --default-button cancel
   for menus. Require an explicit choice to proceed; keep Escape as abort.
+- Time Machine Abort/Escape must end the wizard cleanly with an explicit
+  cancellation message, not dump the shell script as a failed Ansible command.
+  Set DIALOG_ERROR separately from Escape so real rendering errors still fail
+  with useful guidance. Keep cancelled selections distinct from completed ones.
 - Show `--unattended` in the bootstrap command at the top of `provision.sh` and
   in both `taerar/README.md` and this directory's README. The switch must select
   the installation-progressing answer for confirmation prompts using each tool's
@@ -93,6 +97,12 @@
 - Use one reusable computer_menu() renderer for inventory dialogs and the shared
   Python format_computers() formatter for list text. Show bullet points, one
   computer per line and tab-indented version bullets; do not duplicate rendering.
+- Keep Restore and completely New computer documented as TODO. Develop the new
+  version path first: its next screen repeats the full inventory above a menu
+  of unique computer names only (no versions). Use Continue/Abort/Back on every
+  subsequent wizard screen, default Abort, and Back to the immediately previous
+  screen while preserving its choice. Keep selections in memory; no backup
+  modifications until the corresponding implementation is requested.
 - Record changes in `~/.homelab-provision-state` outside the checkout. Track only
   resources created or modified by provisioning; preserve pre-existing resources.
   Record intent before operations that can partially fail and keep markers until

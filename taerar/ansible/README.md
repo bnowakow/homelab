@@ -296,7 +296,7 @@ alongside the versions.
 The dialog shows the complete computer/version list above these options:
 
 The reusable `computer_menu()` function renders the inventory identically on
-both screens. Computer names and versions have bullets, with each version on its
+all screens. Computer names and versions have bullets, with each version on its
 own tab-indented line beneath its computer, for example:
 
 ```text
@@ -315,20 +315,28 @@ stops provisioning; this manual choice is also required with
 Choosing **Create a new computer** opens a second dialog with the same computer
 and version list, followed by:
 
-1. New computer (not existing in the list above).
+1. New computer (not existing in the list above) (**TODO: implement later**).
 2. New version of existing computer (exists in the list above).
 
 Its buttons are **Continue**, **Abort**, and **Back**. Back returns to the first
 screen so the previous choice can be corrected. Abort remains the default on
-both screens; Escape also aborts. The parent selection remains on Create when
+all screens; Escape also aborts. The parent selection remains on Create when
 returning, but the Abort button still has default focus.
 
-**TODO: Restore existing computer will be implemented later.** The first use
-will be a subtype of Create. Selecting Restore currently only displays a TODO
+**TODO: Restore existing computer and New computer will be implemented later.**
+The first implemented path will be **New version of existing computer**. Selecting Restore currently only displays a TODO
 notice; it does not perform a restore.
+
+Choosing **New version of existing computer** opens a third screen. The full
+computer/version list remains at the top, while selectable rows contain only
+unique computer names, for example **Jakku** and **Taerar**, without versions.
+It uses **Continue**, **Abort**, and **Back**, defaulting to Abort. Back returns
+to the create-subtype screen with New version still selected; its own Back
+returns to the first screen. If no computers exist, you can go Back or Abort.
 
 The selected mode (`time_machine_action`: `create` or `restore`), create subtype
 (`time_machine_create_type`: `new_computer`, `new_version`, or null for restore),
+the selected existing name (`time_machine_computer`, null for other paths),
 and inventory are held as Ansible facts for subsequent tasks in this playbook. This step does not create computers,
 restore data, modify backup bundles, or persist a selection, so undo has nothing
 to reverse. Actual create/restore steps will be added separately.
