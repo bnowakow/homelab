@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/bazarr
-  version: 26.1.0
+  version: 26.1.2
   releaseName: bazarr
   takeOwnership: true
   waitForJobs: true

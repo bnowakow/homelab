@@ -2044,6 +2044,25 @@ get_ingress_targets() {
   local host
   local scheme
   local check_path
+  local ingress_json
+  local service_json
+  local service_names
+
+  # An app may have additional Fleet bundles that own ingress resources without
+  # Helm release labels (for example, Profilarr's Localdomain ingress). Include
+  # those routes when they target a Service owned by this release, or the
+  # conventional app-named Service. Keep unrelated namespace ingresses out.
+  service_json="$(kubectl get services -n "$namespace" --kubeconfig "$kubeconfig_path" \
+    -o json 2>/dev/null)" || service_json='{"items":[]}'
+  service_names="$(jq -r --arg app "$app" '
+    .items[]
+    | select((.metadata.annotations["meta.helm.sh/release-name"] // .metadata.labels["app.kubernetes.io/instance"] // .metadata.labels.release) == $app
+        or .metadata.name == $app)
+    | .metadata.name
+  ' <<< "$service_json" | sort -u)"
+
+  ingress_json="$(kubectl get ingress -n "$namespace" --kubeconfig "$kubeconfig_path" \
+    -o json 2>/dev/null)" || return 0
 
   while IFS= read -r ingress; do
     [ -z "$ingress" ] && continue
@@ -2070,15 +2089,15 @@ get_ingress_targets() {
       fi
       printf '%s %s %s\n' "$scheme" "$host" "$check_path"
     done <<< "$hosts"
-  done < <(kubectl get ingress -n "$namespace" --kubeconfig "$kubeconfig_path" \
-    -o json 2>/dev/null | jq -r --arg app "$app" '
-      .items[]
-      | select((.metadata.annotations["meta.helm.sh/release-name"]
-          // .metadata.labels["app.kubernetes.io/instance"]) == $app)
-      | "ingress/" + .metadata.name
-    ' | sort -u)
+  done < <(jq -r --arg app "$app" --argjson services "$(jq -cR 'split("\n") | map(select(length > 0))' <<< "$service_names")" '
+    .items[]
+    | select((.metadata.annotations["meta.helm.sh/release-name"]
+        // .metadata.labels["app.kubernetes.io/instance"]) == $app
+        or any(.spec.rules[]?.http.paths[]?;
+          .backend.service.name as $service | $services | index($service)))
+    | "ingress/" + .metadata.name
+  ' <<< "$ingress_json" | sort -u)
 }
-
 # Follow controller ownership because some charts omit instance labels on pods.
 get_release_resources() {
   local app="$1"

@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/audiobookshelf
-  version: 14.1.0
+  version: 14.1.2
   releaseName: audiobookshelf
   waitForJobs: true
   valuesFiles:
