@@ -1,14 +1,7 @@
 - name: Install Prezto for sup on proxmox5
   hosts: proxmox5.localdomain.bnowakowski.pl
-  vars:
-    prezto_runcoms:
-      - zlogin
-      - zlogout
-      - zpreztorc
-      - zprofile
-      - zshenv
-      - zshrc
-
+  remote_user: sup
+  become: false
   tasks:
     - name: Ensure Zsh is installed
       ansible.builtin.apt:
@@ -16,44 +9,15 @@
         state: present
       become: true
 
-    - name: Clone Prezto and its submodules
-      ansible.builtin.git:
-        repo: https://github.com/sorin-ionescu/prezto.git
-        dest: /home/sup/.zprezto
-        version: master
-        recursive: true
-        update: false
-
-    - name: Check for existing Zsh configuration files
-      ansible.builtin.stat:
-        path: "/home/sup/.{{ item }}"
-      loop: "{{ prezto_runcoms }}"
-      register: prezto_runcom_status
-
-    - name: Link missing Prezto configuration files
-      ansible.builtin.file:
-        src: "/home/sup/.zprezto/runcoms/{{ item.item }}"
-        dest: "/home/sup/.{{ item.item }}"
-        state: link
-      loop: "{{ prezto_runcom_status.results }}"
-      when: not item.stat.exists
+    - name: Install and update Prezto using the shared role
+      ansible.builtin.import_role:
+        name: "{{ playbook_dir }}/../../ansible/roles/prezto"
+      vars:
+        prezto_update_existing: true
+        prezto_remove_legacy_path_block: true
 
     - name: Set Zsh as sup's login shell
       ansible.builtin.user:
         name: sup
         shell: /usr/bin/zsh
       become: true
-
-    - name: Remove the old Ansible PATH block from Prezto's tracked zshenv
-      ansible.builtin.blockinfile:
-        path: /home/sup/.zprezto/runcoms/zshenv
-        state: absent
-
-    - name: Update Prezto and its submodules
-      ansible.builtin.git:
-        repo: https://github.com/sorin-ionescu/prezto.git
-        dest: /home/sup/.zprezto
-        version: master
-        recursive: true
-        update: true
-        force: false

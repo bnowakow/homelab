@@ -1,0 +1,13 @@
+prezto_home: '~'
+prezto_repository: https://github.com/sorin-ionescu/prezto.git
+prezto_version: master
+prezto_update_existing: true
+prezto_remove_legacy_path_block: false
+prezto_rollback_dir: ''
+prezto_runcoms:
+  - zlogin
+  - zlogout
+  - zpreztorc
+  - zprofile
+  - zshenv
+  - zshrc

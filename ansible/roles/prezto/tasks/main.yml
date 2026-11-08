@@ -1,0 +1,104 @@
+- name: Resolve the target user's home for consistent tilde expansion
+  ansible.builtin.command:
+    argv: [/bin/sh, -c, 'printf "%s" "$HOME"']
+  register: prezto_account_home
+  changed_when: false
+
+- name: Expand shared role paths on the target
+  ansible.builtin.set_fact:
+    prezto_target_home: "{{ prezto_account_home.stdout ~ prezto_home[1:] if prezto_home == '~' or prezto_home.startswith('~/') else prezto_home }}"
+    prezto_target_rollback_dir: "{{ prezto_account_home.stdout ~ prezto_rollback_dir[1:] if prezto_rollback_dir == '~' or prezto_rollback_dir.startswith('~/') else prezto_rollback_dir }}"
+
+- name: Check existing Prezto checkout
+  ansible.builtin.stat:
+    path: "{{ prezto_target_home }}/.zprezto"
+    follow: false
+  register: prezto_checkout
+
+- name: Prepare Prezto rollback records when requested
+  ansible.builtin.file:
+    path: "{{ prezto_target_rollback_dir }}"
+    state: directory
+    mode: '0700'
+  when: prezto_rollback_dir | length > 0
+
+- name: Record intent to create the Prezto checkout
+  ansible.builtin.copy:
+    dest: "{{ prezto_target_rollback_dir }}/repo-created"
+    content: ''
+    force: false
+    mode: '0600'
+  when:
+    - prezto_rollback_dir | length > 0
+    - not prezto_checkout.stat.exists
+    - not (prezto_checkout.stat.islnk | default(false))
+
+- name: Clone Prezto and its submodules including Powerlevel10k
+  ansible.builtin.git:
+    repo: "{{ prezto_repository }}"
+    dest: "{{ prezto_target_home }}/.zprezto"
+    version: "{{ prezto_version }}"
+    recursive: true
+    update: false
+  when: not prezto_checkout.stat.exists or prezto_update_existing | bool
+
+- name: Remove the old Ansible PATH block from tracked Prezto zshenv
+  ansible.builtin.blockinfile:
+    path: "{{ prezto_target_home }}/.zprezto/runcoms/zshenv"
+    state: absent
+  when: prezto_remove_legacy_path_block | bool
+
+- name: Update Prezto and its submodules when enabled
+  ansible.builtin.git:
+    repo: "{{ prezto_repository }}"
+    dest: "{{ prezto_target_home }}/.zprezto"
+    version: "{{ prezto_version }}"
+    recursive: true
+    update: true
+    force: false
+  when: prezto_update_existing | bool
+
+- name: Check Powerlevel10k submodule
+  ansible.builtin.stat:
+    path: "{{ prezto_target_home }}/.zprezto/modules/prompt/external/powerlevel10k/powerlevel10k.zsh-theme"
+  register: prezto_p10k
+
+- name: Require the bundled Powerlevel10k theme
+  ansible.builtin.assert:
+    that: prezto_p10k.stat.isreg | default(false)
+    fail_msg: >-
+      Prezto is missing its Powerlevel10k submodule. Initialize/update the existing
+      checkout's submodules or enable prezto_update_existing, then rerun.
+
+- name: Check existing Zsh configuration files
+  ansible.builtin.stat:
+    path: "{{ prezto_target_home }}/.{{ item }}"
+    follow: false
+  loop: "{{ prezto_runcoms }}"
+  register: prezto_runcom_status
+
+- name: Record intent to create missing runcom links
+  ansible.builtin.copy:
+    dest: "{{ prezto_target_rollback_dir }}/link-{{ item.item }}"
+    content: ''
+    force: false
+    mode: '0600'
+  loop: "{{ prezto_runcom_status.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - prezto_rollback_dir | length > 0
+    - not item.stat.exists
+    - not (item.stat.islnk | default(false))
+
+- name: Link missing Prezto configuration files
+  ansible.builtin.file:
+    src: "{{ prezto_target_home }}/.zprezto/runcoms/{{ item.item }}"
+    dest: "{{ prezto_target_home }}/.{{ item.item }}"
+    state: link
+  loop: "{{ prezto_runcom_status.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - not item.stat.exists
+    - not (item.stat.islnk | default(false))
