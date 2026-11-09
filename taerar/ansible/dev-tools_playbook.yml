@@ -5,6 +5,9 @@
   vars:
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
+    - name: Make sure the Xcode license does not block git and Homebrew
+      ansible.builtin.include_tasks: tasks/xcode-license.yml
+
     # SDKMAN (sdkman/tap) and the znotch cask (zkondor/dist) come from third-party
     # taps; Homebrew 7 refuses untrusted taps, so only those named items are
     # trusted. Taps, trusted items, formulae and casks are recorded before
@@ -22,6 +25,7 @@
           'screen|screen||formula'
           'wget|wget||formula'
           'curl|curl||formula'
+          'git|git||formula'
           'ffmpeg|ffmpeg||formula'
           'ggshield|ggshield||formula'
           'mole|mole||formula'
@@ -97,6 +101,7 @@
         HOMEBREW_NO_AUTO_UPDATE: '1'
         HOMEBREW_NO_INSTALL_CLEANUP: '1'
         HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        SUDO_ASKPASS: "{{ playbook_dir }}/files/sudo-askpass.sh"
         HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
       register: dev_tools
       changed_when: "'installed' in dev_tools.stdout_lines"

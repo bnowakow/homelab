@@ -310,8 +310,13 @@ SSH repository check failures stop with a short, actionable explanation.
 Connection timeouts and DNS/network errors are reported separately from rejected
 keys and unverified or changed host keys. Origin remains unchanged by the failing
 run, earlier successful steps remain applied, and provisioning can be rerun after
-the issue is resolved. A port-22 timeout points to GitHub's documented SSH-over-443
-option; no network/SSH configuration is changed automatically.
+the issue is resolved. When port 22 to github.com is blocked (checked with `nc`) but `ssh.github.com:443`
+is reachable, provisioning adds a marked `Host github.com` block (`HostName
+ssh.github.com`, `Port 443`, `HostKeyAlias github.com`) to `~/.ssh/config`, recorded in
+`github-ssh-443` for undo. Before the check it adds GitHub's SSH host keys to
+`~/.ssh/known_hosts` only when they match GitHub's published fingerprints (scanned on
+port 22, or on 443 as a fallback); the added lines are recorded in `github-known-hosts`
+and undo removes exactly those. Host verification is never disabled.
 
 The checks are read-only. Undo restores the original SSH config (or removes a
 newly created file/directory when empty) in every `--keep` mode. Later SSH config
@@ -406,9 +411,17 @@ Dock and the menu bar restart. Dock entries of apps not installed show a
 question mark. `TEST` merges only the Finder domain. Not copied: Keychain,
 Safari, Mail and other app data, and ByHost (per-machine) preferences.
 
+When Xcode.app is the active developer directory but its license is not accepted, git, make
+and Homebrew refuse to run. `tasks/xcode-license.yml` (run at the start of the 1Password, dotfiles,
+GitHub CLI and dev-tools steps, and after the app installs) detects this with `xcodebuild -license check`, asks first in a
+dialog (default Abort) and then runs `sudo -A xcodebuild -license
+accept` through the askpass dialog. With `--unattended` it skips the question and accepts
+the license (the sudo password dialog still appears). Nothing changes when the license is already accepted or
+only the Command Line Tools are in use.
+
 `dev-tools_playbook.yml`, which runs right after `make-dependencies_playbook.yml`
 (below), installs with Homebrew, when missing: SDKMAN (`sdkman/tap/sdkman-cli`),
-screen, wget, curl, ffmpeg, ggshield, mole, mtr, node, ollama, pipx, pyenv,
+screen, wget, curl, git (Homebrew's, which `.zshrc` puts ahead of Apple's `/usr/bin/git`), ffmpeg, ggshield, mole, mtr, node, ollama, pipx, pyenv,
 pyenv-virtualenv, the current `python`, readline, ruby, sshpass, tree, yt-dlp, ansible, dialog and the
 casks rar and znotch (`zkondor/dist/znotch`). Homebrew 7 refuses untrusted taps,
 so only the SDKMAN formula and the znotch cask are trusted, with

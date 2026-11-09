@@ -266,3 +266,8 @@
   `SUDO_ASKPASS=files/sudo-askpass.sh`, which shows the native macOS hidden password
   dialog (osascript) and passes the answer only to sudo. Never read, log or store the
   password.
+  Homebrew cask installs also run sudo (for example Docker Desktop's credential-helper
+  link), so every task or script that runs `brew install --cask` must set `SUDO_ASKPASS`
+  to this helper; Homebrew then adds `-A` itself.
+- Xcode license (tasks/xcode-license.yml): ask before accepting (default Abort); with
+  `--unattended` accept without asking via `sudo -A xcodebuild -license accept`.

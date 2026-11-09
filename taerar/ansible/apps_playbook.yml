@@ -35,3 +35,7 @@
           failed: {{ apps_summary.failed }};
           copied from the Time Machine backup if you accept: {{ apps_summary.from_backup }};
           install by hand: {{ apps_summary.manual | map(attribute='name') | list }}
+
+    # Xcode comes from the App Store above; its license blocks git and Homebrew until accepted.
+    - name: Make sure the Xcode license does not block git and Homebrew
+      ansible.builtin.include_tasks: tasks/xcode-license.yml

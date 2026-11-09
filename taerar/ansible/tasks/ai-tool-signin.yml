@@ -32,12 +32,16 @@
   when: not ai_signed_in
   block:
     # Open by path first: right after installation Launch Services may not know
-    # the new app yet, so `open -a NAME` can fail on a fresh Mac. Never fatal.
+    # the new app yet, so `open -a NAME` can fail on a fresh Mac. Register the
+    # bundle first, retry, and never fail.
     - name: "{{ ai_tool.name }}: open the app so you can sign in"
       ansible.builtin.shell: |
         for attempt in 1 2 3 4 5; do
           for bundle in "/Applications/$APP.app" "$HOME/Applications/$APP.app"; do
-            if [ -d "$bundle" ] && open "$bundle"; then echo opened; exit 0; fi
+            if [ -d "$bundle" ]; then
+              /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$bundle" >/dev/null 2>&1 || true
+              open "$bundle" && { echo opened; exit 0; }
+            fi
           done
           open -a "$APP" 2>/dev/null && { echo opened; exit 0; }
           sleep 2

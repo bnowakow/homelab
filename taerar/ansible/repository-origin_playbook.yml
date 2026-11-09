@@ -7,6 +7,116 @@
     repo_dir: "{{ lookup('env', 'HOME') }}/code/homelab"
     state_dir: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
   tasks:
+    # Some networks block SSH on port 22. GitHub also serves SSH on
+    # ssh.github.com:443 with the same host keys, so fall back to that.
+    # A bare TCP connect is not enough (some networks accept it and then drop
+    # the SSH traffic), so test with a real SSH key exchange.
+    - name: Check whether SSH port 22 reaches GitHub
+      ansible.builtin.shell:
+        cmd: ssh-keyscan -T 10 -t ed25519 github.com 2>/dev/null | grep -q .
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      register: github_port22
+
+    - name: Check whether SSH port 443 reaches GitHub
+      ansible.builtin.shell:
+        cmd: ssh-keyscan -T 10 -p 443 -t ed25519 ssh.github.com 2>/dev/null | grep -q .
+      args:
+        executable: /bin/bash
+      changed_when: false
+      failed_when: false
+      register: github_port443
+      when: github_port22.rc != 0
+
+    - name: Route GitHub SSH over port 443 (port 22 is blocked here)
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          umask 077
+          config="$HOME/.ssh/config"
+          begin='# BEGIN HOMELAB GITHUB SSH OVER 443'
+          if [[ -f "$config" ]] && grep -qxF -- "$begin" "$config"; then echo present; exit 0; fi
+          mkdir -p "$STATE_DIR"
+          if [[ ! -d "$HOME/.ssh" ]]; then
+            mkdir -m 700 "$HOME/.ssh"
+            : > "$STATE_DIR/github-ssh-443-ssh-dir-created"
+          fi
+          [[ -f "$config" ]] || : > "$STATE_DIR/github-ssh-443-config-created"
+          # Record intent before editing so undo can remove the block.
+          : > "$STATE_DIR/github-ssh-443"
+          {
+            printf '\n%s\n' "$begin"
+            printf 'Host github.com\n  HostName ssh.github.com\n  Port 443\n  HostKeyAlias github.com\n'
+            printf '# END HOMELAB GITHUB SSH OVER 443\n'
+          } >> "$config"
+          chmod 600 "$config"
+          echo added
+      args:
+        executable: /bin/bash
+      environment:
+        STATE_DIR: "{{ state_dir }}"
+      register: github_443_config
+      changed_when: "'added' in github_443_config.stdout"
+      when: github_port22.rc != 0 and github_port443.rc | default(1) == 0
+
+    # A new Mac has no known_hosts, so strict host checking would always fail.
+    # Instead of trusting whatever answers on first use, accept only the host
+    # keys whose fingerprints match the ones GitHub publishes at
+    # https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
+    # Host verification stays on; keys that do not match are never added.
+    - name: Trust GitHub's published SSH host keys (verified by fingerprint)
+      ansible.builtin.shell:
+        cmd: |
+          {% raw %}
+          set -euo pipefail
+          umask 077
+          pinned() {
+            case "$1" in
+              ssh-ed25519) echo 'SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU' ;;
+              ssh-rsa) echo 'SHA256:uNiVztksCsDhcc0u9e8BujQXVUpKZIDTMczCvj3tD2s' ;;
+              ecdsa-sha2-nistp256) echo 'SHA256:p2QAMXNIC1TJYWeIOttrVc98/R1BUFWu3/LiyKgUfQM' ;;
+            esac
+          }
+          known="$HOME/.ssh/known_hosts"
+          scan=$(ssh-keyscan -T 15 -t ed25519,rsa,ecdsa github.com 2>/dev/null || true)
+          if [[ -z "$scan" ]]; then
+            scan=$(ssh-keyscan -T 15 -p 443 -t ed25519,rsa,ecdsa ssh.github.com 2>/dev/null \
+              | sed 's/^\[ssh\.github\.com\]:443 /github.com /' || true)
+          fi
+          new_lines=()
+          while IFS= read -r line; do
+            [[ -n "$line" && "$line" != \#* ]] || continue
+            type=$(awk '{print $2}' <<<"$line")
+            want=$(pinned "$type")
+            [[ -n "$want" ]] || continue
+            got=$(ssh-keygen -lf <(printf '%s\n' "$line") | awk '{print $2}')
+            [[ "$got" == "$want" ]] || { echo "Fingerprint mismatch for $type: refusing to trust it." >&2; continue; }
+            if [[ -f "$known" ]] && grep -qF -- "$line" "$known"; then continue; fi
+            new_lines+=("$line")
+          done <<<"$scan"
+          if (( ${#new_lines[@]} == 0 )); then echo unchanged; exit 0; fi
+          mkdir -p "$STATE_DIR"
+          if [[ ! -d "$HOME/.ssh" ]]; then
+            mkdir -m 700 "$HOME/.ssh"
+            : > "$STATE_DIR/github-known-hosts-ssh-dir-created"
+          fi
+          # Record the exact lines before adding them, so undo removes only these.
+          printf '%s\n' "${new_lines[@]}" >> "$STATE_DIR/github-known-hosts"
+          [[ -f "$known" ]] || : > "$STATE_DIR/github-known-hosts-file-created"
+          printf '%s\n' "${new_lines[@]}" >> "$known"
+          chmod 600 "$known"
+          echo "added ${#new_lines[@]}"
+          {% endraw %}
+      args:
+        executable: /bin/bash
+      environment:
+        STATE_DIR: "{{ state_dir }}"
+      register: github_host_keys
+      changed_when: "'added' in github_host_keys.stdout"
+      failed_when: false
+
     - name: Verify SSH repository access before changing origin
       ansible.builtin.command:
         argv: [git, ls-remote, 'git@github.com:bnowakow/homelab.git', HEAD]

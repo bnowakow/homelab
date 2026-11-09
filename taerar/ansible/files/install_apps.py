@@ -45,6 +45,9 @@ def main():
     home = Path.home()
     brew_env = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE="1", HOMEBREW_NO_INSTALL_CLEANUP="1",
                     HOMEBREW_NO_INSTALL_UPGRADE="1", HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK="1")
+    # Casks such as Docker Desktop run sudo; tasks have no terminal, so Homebrew
+    # (which adds -A when this is set) asks through the askpass dialog.
+    brew_env["SUDO_ASKPASS"] = str(Path(__file__).with_name("sudo-askpass.sh"))
     if os.environ.get("UNATTENDED") == "true":
         brew_env["HOMEBREW_NO_ASK"] = "1"
     else:

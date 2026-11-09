@@ -291,6 +291,40 @@ PY
   undo_homebrew_manifest "$state_dir" make-dependencies-formulae formula
   rm -f "$state_dir/make-dependencies-casks.tmp" "$state_dir/make-dependencies-formulae.tmp"
 
+  # Remove the GitHub SSH-over-443 block provisioning added to ~/.ssh/config.
+  if [[ -f "$state_dir/github-ssh-443" ]]; then
+    if [[ -f "$HOME/.ssh/config" ]]; then
+      sed '/^# BEGIN HOMELAB GITHUB SSH OVER 443$/,/^# END HOMELAB GITHUB SSH OVER 443$/d' "$HOME/.ssh/config" > "$HOME/.ssh/config.undo"
+      cat "$HOME/.ssh/config.undo" > "$HOME/.ssh/config"
+      rm -f "$HOME/.ssh/config.undo"
+      if [[ -f "$state_dir/github-ssh-443-config-created" && ! -s "$HOME/.ssh/config" ]]; then
+        rm -f "$HOME/.ssh/config"
+      fi
+    fi
+    echo 'Removed the GitHub SSH-over-443 routing added by provisioning.'
+    rm -f "$state_dir/github-ssh-443" "$state_dir/github-ssh-443-config-created"
+  fi
+
+  # Remove the GitHub host keys provisioning added to known_hosts (only those lines).
+  if [[ -f "$state_dir/github-known-hosts" ]]; then
+    if [[ -f "$HOME/.ssh/known_hosts" ]]; then
+      grep -vxFf "$state_dir/github-known-hosts" "$HOME/.ssh/known_hosts" > "$HOME/.ssh/known_hosts.undo" || true
+      cat "$HOME/.ssh/known_hosts.undo" > "$HOME/.ssh/known_hosts"
+      rm -f "$HOME/.ssh/known_hosts.undo"
+      if [[ -f "$state_dir/github-known-hosts-file-created" && ! -s "$HOME/.ssh/known_hosts" ]]; then
+        rm -f "$HOME/.ssh/known_hosts"
+      fi
+    fi
+    if [[ -f "$state_dir/github-known-hosts-ssh-dir-created" && -d "$HOME/.ssh" && -z "$(ls -A "$HOME/.ssh")" ]]; then
+      rmdir "$HOME/.ssh"
+    fi
+    if [[ -f "$state_dir/github-ssh-443-ssh-dir-created" && -d "$HOME/.ssh" && -z "$(ls -A "$HOME/.ssh")" ]]; then
+      rmdir "$HOME/.ssh"
+    fi
+    echo 'Removed the GitHub SSH host keys added by provisioning.'
+    rm -f "$state_dir/github-known-hosts" "$state_dir/github-known-hosts-file-created" "$state_dir/github-known-hosts-ssh-dir-created" "$state_dir/github-ssh-443-ssh-dir-created"
+  fi
+
   # Restore origin before undoing login or removing the checkout.
   if [[ -d "$state_dir/repo-origin" ]]; then
     if [[ -e "$repo_dir/.git" ]]; then

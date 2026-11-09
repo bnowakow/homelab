@@ -7,6 +7,9 @@
     state_dir: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
     gh_config_dir: "{{ lookup('env', 'GH_CONFIG_DIR') or (lookup('env', 'XDG_CONFIG_HOME') or lookup('env', 'HOME') + '/.config') + '/gh' }}"
   tasks:
+    - name: Make sure the Xcode license does not block git, make and Homebrew
+      ansible.builtin.include_tasks: tasks/xcode-license.yml
+
     - name: Install GitHub CLI and record newly installed formulae for rollback
       ansible.builtin.shell: |
         set -euo pipefail

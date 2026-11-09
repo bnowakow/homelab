@@ -75,6 +75,7 @@
         HOMEBREW_NO_AUTO_UPDATE: '1'
         HOMEBREW_NO_INSTALL_CLEANUP: '1'
         HOMEBREW_NO_INSTALL_UPGRADE: '1'
+        SUDO_ASKPASS: "{{ playbook_dir }}/files/sudo-askpass.sh"
         HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
       register: ai_tools_install
       changed_when: "'installed-casks' in ai_tools_install.stdout"
