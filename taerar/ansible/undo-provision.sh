@@ -46,7 +46,15 @@ entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
 removed = kept = 0
 for entry in reversed(entries):
     path = entry["path"]
-    if entry["type"] == "file":
+    if entry["type"] == "replaced":
+        # A file replaced from the backup (Finder sidebar): put the original back.
+        backup = entry.get("backup")
+        if backup and os.path.lexists(backup):
+            os.replace(backup, path)
+        elif not backup and os.path.lexists(path):
+            os.unlink(path)
+        removed += 1
+    elif entry["type"] == "file":
         temporary = entry.get("temporary")
         if temporary and os.path.lexists(temporary):
             os.unlink(temporary)
@@ -211,6 +219,32 @@ PY
   # Files copied from Time Machine backups were the final steps, in reverse order:
   # ~/Downloads, then the apps and preferences, then the Dia settings.
   undo_copied_files "$state_dir" time-machine-downloads 'files copied into ~/Downloads' || return 1
+  # Finder and system settings were merged with `defaults`; restore the saved originals.
+  if [[ -f "$state_dir/time-machine-settings.jsonl" ]]; then
+    python3 - "$state_dir/time-machine-settings.jsonl" <<'PY' || return 1
+import json, subprocess, sys
+restored = 0
+domains = {}
+for line in open(sys.argv[1]):
+    if line.strip():
+        entry = json.loads(line)
+        domains.setdefault(entry["domain"], entry)   # first record holds the original
+for domain, entry in domains.items():
+    backup = entry.get("backup")
+    if backup:
+        result = subprocess.run(["defaults", "import", domain, backup])
+    else:
+        result = subprocess.run(["defaults", "delete", domain], stderr=subprocess.DEVNULL)
+    restored += result.returncode == 0
+print(f"Restored {restored} of {len(domains)} settings domain(s) merged from a backup.")
+for process in ("cfprefsd", "Finder", "Dock", "SystemUIServer"):
+    subprocess.run(["killall", process], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+PY
+    rm -f "$state_dir/time-machine-settings.jsonl"
+    rm -rf "$state_dir/system-settings-backup"
+  fi
+  undo_copied_files "$state_dir" time-machine-user-files 'the user files copied from a backup' || return 1
+  rm -rf -- "$state_dir/user-files-backup"
   undo_copied_files "$state_dir" time-machine-apps 'the apps and preferences copied from a backup' || return 1
   undo_copied_files "$state_dir" time-machine-dia 'the Dia settings copied from a backup' || return 1
   # Homebrew rsync was installed only for that copy.

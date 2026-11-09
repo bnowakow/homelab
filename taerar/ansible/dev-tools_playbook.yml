@@ -70,9 +70,23 @@
           for entry in "${wanted_casks[@]}"; do append "$entry" "$STATE_DIR/dev-tools-casks"; done
           for entry in $dependencies; do append "$entry" "$STATE_DIR/dev-tools-formulae"; done
         fi
-        if [[ -n "${install_formulae[*]-}" ]]; then tty brew install --formula "${install_formulae[@]}"; fi
-        if [[ -n "${install_casks[*]-}" ]]; then tty brew install --cask "${install_casks[@]}"; fi
+        # One failing or disabled package must not stop the others.
+        failed=()
+        for name in "${install_formulae[@]-}"; do
+          [[ -n "$name" ]] || continue
+          tty brew install --formula "$name" || failed+=("$name")
+        done
+        for name in "${install_casks[@]-}"; do
+          [[ -n "$name" ]] || continue
+          if brew info --cask --json=v2 "$name" 2>/dev/null | grep -q '"disabled": *true'; then
+            echo "Cask $name is disabled by Homebrew; skipped (install it manually)." >&2
+            failed+=("$name (disabled)")
+            continue
+          fi
+          tty brew install --cask "$name" || failed+=("$name")
+        done
         echo installed
+        if [[ -n "${failed[*]-}" ]]; then echo "failed: ${failed[*]}"; fi
       args:
         executable: /bin/bash
       environment:
@@ -86,3 +100,8 @@
         HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
       register: dev_tools
       changed_when: "'installed' in dev_tools.stdout_lines"
+
+    - name: Report developer tools that could not be installed
+      ansible.builtin.debug:
+        msg: "Not installed: {{ dev_tools.stdout_lines | select('match', '^failed: ') | first | regex_replace('^failed: ', '') }}"
+      when: "dev_tools.stdout_lines | select('match', '^failed: ') | list | length > 0"

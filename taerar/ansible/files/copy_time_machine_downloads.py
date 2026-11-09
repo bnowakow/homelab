@@ -629,6 +629,186 @@ def copy_apps(catalog, backup, user, manifest, mode):
             "plists": copied_plists, "skipped_existing": skipped, "notes": notes}
 
 
+# Preference domains merged from the backup by --system-settings. Each is read
+# from ~/Library/Preferences/<domain>.plist in the backup and applied with
+# `defaults` (never by replacing the file: cfprefsd would overwrite it).
+SETTINGS_DOMAINS = [
+    ("NSGlobalDomain", ".GlobalPreferences.plist"),
+    "com.apple.finder", "com.apple.desktopservices",
+    "com.apple.dock", "com.apple.spaces", "com.apple.WindowManager",
+    "com.apple.AppleMultitouchTrackpad", "com.apple.driver.AppleBluetoothMultitouch.trackpad",
+    "com.apple.driver.AppleBluetoothMultitouch.mouse", "com.apple.HIToolbox",
+    "com.apple.symbolichotkeys", "com.apple.screencapture", "com.apple.menuextra.clock",
+    "com.apple.controlcenter", "com.apple.universalaccess", "com.apple.systempreferences",
+]
+# Volatile or machine-specific keys that are never merged.
+SETTINGS_SKIPPED_KEYS = {"FXRecentFolders", "GoToField", "GoToFieldHistory", "FXConnectToLastURL",
+                         "FXDesktopVolumePositions", "NSNavLastRootDirectory", "NSNavLastCurrentDirectory"}
+SETTINGS_SKIPPED_PREFIXES = ("NSWindow Frame", "NSNavPanel", "NSSplitView", "NSTableView")
+
+
+def settings_domains():
+    for entry in SETTINGS_DOMAINS:
+        domain, name = entry if isinstance(entry, tuple) else (entry, entry + ".plist")
+        yield domain, name
+
+
+def read_backup_plist(path):
+    try:
+        data = plistlib.loads(path.read_bytes())
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def copy_system_settings(backup, user, manifest, mode, state_dir=None):
+    """Merge Finder, Dock and system preference keys from the backup into this Mac.
+
+    The current domain is exported to <state>/system-settings-backup first and
+    recorded in the manifest before anything changes, so undo can restore it.
+    """
+    home = find_user_home(backup, user)
+    state_dir = state_dir or manifest.parent
+    backups = state_dir / "system-settings-backup"
+    backups.mkdir(parents=True, exist_ok=True)
+    plan = []
+    for domain, name in settings_domains():
+        data = read_backup_plist(home / "Library/Preferences" / name)
+        if not data:
+            continue
+        keys = {key: value for key, value in data.items()
+                if key not in SETTINGS_SKIPPED_KEYS and not key.startswith(SETTINGS_SKIPPED_PREFIXES)}
+        if keys:
+            plan.append((domain, keys))
+    if mode == "TEST":
+        plan = [item for item in plan if item[0] == "com.apple.finder"][:1]
+    applied = []
+    for domain, keys in plan:
+        exported = subprocess.run(["defaults", "export", domain, "-"], capture_output=True)
+        current = {}
+        saved = None
+        if exported.returncode == 0:
+            try:
+                current = plistlib.loads(exported.stdout)
+            except (plistlib.InvalidFileException, ValueError):
+                current = {}
+            saved = backups / f"{domain}.plist"
+        if not any(current.get(key) != value for key, value in keys.items()):
+            continue
+        if saved and not saved.exists():   # keep the very first original across reruns
+            saved.write_bytes(exported.stdout)
+        record(manifest, {"type": "domain", "domain": domain, "backup": str(saved) if saved else None,
+                          "keys": sorted(keys)})
+        merged = dict(current)
+        merged.update(keys)
+        result = subprocess.run(["defaults", "import", domain, "-"], input=plistlib.dumps(merged),
+                                capture_output=True)
+        if result.returncode != 0:
+            raise CopyError(f"defaults import {domain} failed: {result.stderr.decode(errors='replace').strip()}")
+        applied.append(domain)
+    if applied:
+        for process in ("cfprefsd", "Finder", "Dock", "SystemUIServer"):
+            subprocess.run(["killall", process], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"what": "system-settings", "backup": backup.name, "mode": mode, "domains": applied,
+            "planned": [domain for domain, _ in plan]}
+
+
+# Folders under the home folder copied by --user-files (new files only).
+USER_FILE_ROOTS = [".ssh", "Library/Fonts", "Library/LaunchAgents", "Library/Services", "Library/Scripts"]
+SIDEBAR_DIR = Path("Library/Application Support/com.apple.sharedfilelist")
+SIDEBAR_PREFIX = "com.apple.LSSharedFileList.FavoriteItems.sfl"
+
+
+def plan_user_files(home, mode):
+    """(relative path, source) pairs of ssh, fonts, login items, services and scripts."""
+    files = {}
+    for root in USER_FILE_ROOTS:
+        base = home / root
+        if not base.is_dir() or base.is_symlink():
+            continue
+        for folder, directories, names in os.walk(base):
+            directories.sort()
+            for name in sorted(names):
+                if name in SKIPPED_NAMES:
+                    continue
+                found = Path(folder) / name
+                if found.is_symlink() or found.is_file():   # skips sockets (ssh agent, ControlMaster)
+                    files[found.relative_to(home)] = found
+    ordered = sorted(files.items(), key=lambda item: str(item[0]))
+    if mode == "TEST":
+        # One small file only: known_hosts when present, else the first file.
+        preferred = [item for item in ordered if item[0] == Path(".ssh/known_hosts")]
+        return (preferred or ordered)[:1]
+    return ordered
+
+
+def replace_sidebar(home, destination_home, manifest, state_dir):
+    """Replace the Finder sidebar favorites with the backup's, saving the original."""
+    source_dir = home / SIDEBAR_DIR
+    replaced = []
+    if not source_dir.is_dir():
+        return replaced
+    for source in sorted(source_dir.glob(SIDEBAR_PREFIX + "*")):
+        if not source.is_file() or source.is_symlink():
+            continue
+        target = destination_home / SIDEBAR_DIR / source.name
+        if target.is_file() and target.read_bytes() == source.read_bytes():
+            continue
+        backup = None
+        if target.exists():
+            folder = state_dir / "user-files-backup"
+            folder.mkdir(parents=True, exist_ok=True)
+            backup = folder / target.name
+            if not backup.exists():
+                result = subprocess.run([find_rsync(), "-lptX", str(target), str(backup)],
+                                        stdout=sys.stderr, stdin=subprocess.DEVNULL)
+                if result.returncode != 0:
+                    raise CopyError(f"rsync failed (exit code {result.returncode}) saving {target.name}.")
+        record(manifest, {"type": "replaced", "path": str(target), "backup": str(backup) if backup else None})
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary = target.with_name(target.name + ".homelab-tmp")
+        # Homebrew rsync (keeps times and extended attributes) into a temporary
+        # name next to the target, then an atomic rename.
+        result = subprocess.run([find_rsync(), "-lptX", str(source), str(temporary)],
+                                stdout=sys.stderr, stdin=subprocess.DEVNULL)
+        if result.returncode != 0:
+            if temporary.exists():
+                temporary.unlink()
+            raise CopyError(f"rsync failed (exit code {result.returncode}) copying {source.name}.")
+        os.replace(temporary, target)
+        replaced.append(target.name)
+    return replaced
+
+
+def copy_user_files(backup, user, manifest, mode):
+    """Copy ~/.ssh, fonts, LaunchAgents, Services, Scripts (new files only) and the Finder sidebar."""
+    home = find_user_home(backup, user)
+    try:
+        files = plan_user_files(home, mode)
+    except PermissionError as error:
+        raise CopyError(FULL_DISK_ACCESS) from error
+    destination = Path.home()
+    base = manifest.parent / (manifest.stem + "-work")
+    copied, skipped = 0, 0
+    if files:
+        needed = sum(path.lstat().st_size for _, path in files)
+        if needed + FREE_SPACE_MARGIN > shutil.disk_usage(destination).free:
+            raise CopyError(f"Not enough free space for the user files ({needed / 1024 ** 2:.0f} MiB).")
+        progress(f"Copying {len(files)} user file(s) ({needed / 1024 ** 2:.0f} MiB) into {destination}...")
+        copied, skipped = copy_files(files, home, destination, manifest, base, backup.name)
+    ssh = destination / ".ssh"
+    if ssh.is_dir() and (ssh.stat().st_mode & 0o077):
+        ssh.chmod(0o700)   # a folder we created gets default permissions; ssh wants it private
+    sidebar = []
+    if mode == "PROD":
+        sidebar = replace_sidebar(home, destination, manifest, manifest.parent)
+        if sidebar:
+            for process in ("sharedfilelistd", "Finder"):
+                subprocess.run(["killall", process], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"what": "user-files", "backup": backup.name, "mode": mode, "copied": copied,
+            "skipped_existing": skipped, "sidebar": sidebar}
+
+
 def main():
     if sys.argv[1:] == ["--check-access"]:
         # Used by full-disk-access_playbook.yml early in provisioning.
@@ -639,6 +819,10 @@ def main():
     catalog = None
     if args and args[0] in ("--dia", "--dia-extensions"):
         what, args = args[0][2:], args[1:]
+    elif args and args[0] == "--user-files":
+        what, args = "user-files", args[1:]
+    elif args and args[0] == "--system-settings":
+        what, args = "system-settings", args[1:]
     elif args and args[0] == "--apps":
         what, catalog, args = "apps", args[1], args[2:]
     if what == "dia-extensions":
@@ -662,6 +846,15 @@ def main():
         if what == "dia-extensions":
             print(json.dumps({"what": what, "backup": backup.name,
                               "extensions": list_dia_extensions(find_user_home(backup, user))}))
+            return
+        if what == "user-files":
+            print(json.dumps(copy_user_files(backup, user, manifest, mode)))
+            return
+        if what == "system-settings":
+            try:
+                print(json.dumps(copy_system_settings(backup, user, manifest, mode)))
+            except PermissionError as error:
+                raise CopyError(FULL_DISK_ACCESS) from error
             return
         if what == "apps":
             print(json.dumps(copy_apps(catalog, backup, user, manifest, mode)))

@@ -345,6 +345,37 @@ may need the same Apple ID. Uses the same Homebrew rsync staging, manifest
 (`time-machine-apps.jsonl`) and undo as the other backup copies; `TEST` copies one
 plist and no app.
 
+`time-machine-user-files-question_playbook.yml` asks (saved as
+`time_machine.user_files`) whether to copy user files, and
+`time-machine-user-files_playbook.yml` does it after the apps copy: `~/.ssh`
+(including private keys; the folder is set to mode 700 and agent/ControlMaster
+sockets are skipped), `~/Library/Fonts`, `~/Library/LaunchAgents` (copied but not
+loaded, so nothing runs until the next login), `~/Library/Services` and
+`~/Library/Scripts`. Files are copied with the same Homebrew rsync staging, never
+overwritten, and removed by undo while unchanged (`time-machine-user-files.jsonl`).
+The Finder sidebar favorites (`com.apple.LSSharedFileList.FavoriteItems.sfl*`) are
+the one exception (also copied with rsync): macOS already has them on a new Mac, so they are replaced after
+saving the original in `user-files-backup`, and undo restores it; the sidebar
+bookmarks may point at folders that do not exist here. `TEST` copies one small file.
+`~/.gitconfig` and `~/.zshrc` are not read from the backup: they are repository
+dotfiles installed by `make install-dotfiles` in the dotfiles step.
+
+`time-machine-settings-question_playbook.yml` asks (saved as `time_machine.settings`)
+whether to merge Finder and system settings from the backup;
+`time-machine-settings_playbook.yml` does it after the apps copy. For these domains:
+global preferences, Finder, desktop services, Dock, Spaces, WindowManager,
+trackpad and mouse, input sources, symbolic hotkeys, screenshot, menu-bar clock,
+Control Center, accessibility and System Settings; it reads
+`~/Library/Preferences/<domain>.plist` in the backup and merges the keys with
+`defaults export`/`import` (never by replacing files, which cfprefsd would
+overwrite). Keys from the backup win and other keys stay; volatile keys (recent
+folders, window frames) are skipped. The current domain is exported to
+`~/.homelab-provision-state/system-settings-backup` and recorded in
+`time-machine-settings.jsonl` first, so `undo-provision.sh` restores it. Finder,
+Dock and the menu bar restart. Dock entries of apps not installed show a
+question mark. `TEST` merges only the Finder domain. Not copied: Keychain,
+Safari, Mail and other app data, and ByHost (per-machine) preferences.
+
 `dev-tools_playbook.yml`, which runs right after `make-dependencies_playbook.yml`
 (below), installs with Homebrew, when missing: SDKMAN (`sdkman/tap/sdkman-cli`),
 screen, wget, curl, ffmpeg, ggshield, mole, mtr, node, ollama, pipx, pyenv,
@@ -660,8 +691,11 @@ Dia is Chromium based, so only plain settings are copied (from
 - History, cookies, saved logins, autofill, site data and caches.
 
 Because Dia creates these files on first launch, copy **before opening Dia**: a
-file Dia already created is kept, not replaced. The step refuses to run while Dia
-is running, since a browser rewrites its settings when it quits.
+file Dia already created is kept, not replaced. The step checks whether Dia is
+running first (`tasks/wait-for-app-quit.yml`): if it is, a dialog asks you to quit
+it (Cmd+Q) and confirm, then checks again, repeating until Dia is closed. Abort
+(the default), no usable terminal, or ten failed checks stop with your answers
+saved, since a browser rewrites its settings when it quits.
 
 ### Reinstalling Dia extensions from the backup list
 

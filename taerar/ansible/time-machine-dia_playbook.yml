@@ -168,19 +168,13 @@
 
     # A running browser rewrites its settings when it quits, so copy only while
     # it is closed.
-    - name: Check that Dia is not running
-      ansible.builtin.command: pgrep -x Dia
-      register: dia_running
-      changed_when: false
-      failed_when: false
+    - name: Make sure Dia is not running (ask the user to quit it and re-check)
+      ansible.builtin.include_tasks: tasks/wait-for-app-quit.yml
+      vars:
+        quit_process: Dia
+        quit_app_name: Dia
+        quit_attempt: 1
       when: time_machine_copy_dia == 'copy'
-
-    - name: Ask to quit Dia before copying its settings
-      ansible.builtin.fail:
-        msg: >-
-          Dia is running. Quit Dia (Cmd+Q) so its settings are not overwritten when it
-          closes, then rerun provisioning. Your answers are saved.
-      when: time_machine_copy_dia == 'copy' and dia_running.rc == 0
 
     - name: Install Homebrew rsync for copying files from backups
       ansible.builtin.include_tasks: tasks/install-rsync.yml

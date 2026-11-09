@@ -9,9 +9,17 @@
 
 - import_playbook: time-machine-apps-question_playbook.yml
 
+- import_playbook: time-machine-user-files-question_playbook.yml
+
+- import_playbook: time-machine-settings-question_playbook.yml
+
 - import_playbook: time-machine-dia_playbook.yml
 
 - import_playbook: time-machine-apps_playbook.yml
+
+- import_playbook: time-machine-user-files_playbook.yml
+
+- import_playbook: time-machine-settings_playbook.yml
 
 # The slowest step comes last.
 - import_playbook: time-machine-downloads_playbook.yml

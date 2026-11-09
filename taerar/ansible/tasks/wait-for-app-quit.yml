@@ -1,0 +1,47 @@
+# Ensure an app is not running before its settings are copied.
+# Variables: quit_process (pgrep -x name), quit_app_name (shown to the user),
+# quit_attempt (starts at 1). While the app runs, ask the user to quit it and
+# confirm, then check again; Abort (the default) or a missing terminal stops.
+- name: "Check that {{ quit_app_name }} is not running"
+  ansible.builtin.command: "pgrep -x {{ quit_process }}"
+  register: quit_check
+  changed_when: false
+  failed_when: false
+
+- name: "Ask to quit {{ quit_app_name }} and confirm"
+  ansible.builtin.shell: |
+    dialog --clear --stdout --cr-wrap --title 'Quit $APP_NAME' \
+      --yes-label "I quit it, check again" --no-label Abort --default-button no \
+      --yesno "$APP_NAME is running. It rewrites its settings when it closes, which would overwrite the copied ones.\n\nQuit $APP_NAME (Cmd+Q), then choose 'I quit it, check again'." 12 70 \
+      < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+  args:
+    executable: /bin/bash
+  environment:
+    APP_NAME: "{{ quit_app_name }}"
+    PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+    TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+    DIALOG_ERROR: '70'
+  register: quit_answer
+  changed_when: false
+  failed_when: false
+  when: quit_check.rc == 0
+
+- name: "Stop while {{ quit_app_name }} keeps running"
+  ansible.builtin.fail:
+    msg: >-
+      {{ quit_app_name }} is running. Quit it (Cmd+Q) so its settings are not overwritten
+      when it closes, then rerun provisioning. Your answers are saved.
+  when: >-
+    quit_check.rc == 0 and
+    (quit_answer.rc != 0 or quit_attempt | int >= 10)
+
+- name: Count the attempt
+  ansible.builtin.set_fact:
+    quit_next_attempt: "{{ quit_attempt | int + 1 }}"
+  when: quit_check.rc == 0
+
+- name: "Check {{ quit_app_name }} again"
+  ansible.builtin.include_tasks: wait-for-app-quit.yml
+  vars:
+    quit_attempt: "{{ quit_next_attempt }}"
+  when: quit_check.rc == 0

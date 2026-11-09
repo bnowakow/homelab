@@ -1,0 +1,68 @@
+- name: Copy user files (ssh, fonts, login items, sidebar) from the selected Time Machine backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD copies the app bundles and preference files; TEST one preference file.
+    files_env: "{{ provision_env | default('PROD') }}"
+    files_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # The question was asked earlier (time-machine-user-files-question_playbook.yml);
+    # this long copy runs last. The fact stays unset when the question was skipped
+    # (no copy source, cancelled, or no Full Disk Access).
+    - name: Skip unless copying user files was chosen
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_saved_cancelled | default(false)) or
+        (time_machine_copy_files | default('skip')) != 'copy'
+  tasks:
+    - name: Install Homebrew rsync for copying files from backups
+      ansible.builtin.include_tasks: tasks/install-rsync.yml
+      when: time_machine_copy_files == 'copy'
+
+    - name: Copy user files from the latest backup without overwriting files
+      ansible.builtin.shell: >-
+        {{ ansible_playbook_python | quote }}
+        {{ (playbook_dir + '/files/copy_time_machine_downloads.py') | quote }}
+        --user-files
+        {{ files_source_bundle | quote }}
+        {{ lookup('env', 'HOME') | quote }}
+        {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-user-files.jsonl') | quote }}
+        {{ files_env | quote }}
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
+      args:
+        executable: /bin/bash
+      environment:
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        PYTHONDONTWRITEBYTECODE: '1'
+        HOMELAB_RSYNC: "{{ (rsync_install.stdout_lines | select('match', '^rsync=') | first)[6:] }}"
+      register: files_copy
+      # The helper prints its JSON summary only on success; its error message
+      # was already shown in the terminal above.
+      changed_when: files_copy.rc == 0 and ((files_copy.stdout | from_json).copied > 0 or (files_copy.stdout | from_json).sidebar | length > 0)
+      failed_when: false
+      when: time_machine_copy_files == 'copy'
+
+    - name: Stop with a short explanation when copying user files failed
+      ansible.builtin.fail:
+        msg: >-
+          Copying user files failed: {{ (files_copy.stderr_lines | default([]) | last)
+          | default('see the message printed above this task.', true) }}
+          The backup was only read and nothing was overwritten. Earlier steps and
+          your saved answers remain; fix the problem and rerun provisioning.
+      when: time_machine_copy_files == 'copy' and files_copy.rc != 0
+
+    - name: Report the user files copy
+      vars:
+        files_summary: "{{ files_copy.stdout | from_json }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ files_env }}: copied {{ files_summary.copied }} user file(s) from backup {{ files_summary.backup }};
+          skipped {{ files_summary.skipped_existing }} existing; replaced Finder sidebar files {{ files_summary.sidebar }}.
+          LaunchAgents are copied but not loaded. Undo removes unchanged copies and restores the sidebar.
+      when: time_machine_copy_files == 'copy'

@@ -1,0 +1,64 @@
+- name: Merge Finder and system settings from the selected Time Machine backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD copies the app bundles and preference files; TEST one preference file.
+    settings_env: "{{ provision_env | default('PROD') }}"
+    settings_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # The question was asked earlier (time-machine-settings-question_playbook.yml);
+    # this long copy runs last. The fact stays unset when the question was skipped
+    # (no copy source, cancelled, or no Full Disk Access).
+    - name: Skip unless copying settings was chosen
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_saved_cancelled | default(false)) or
+        (time_machine_copy_settings | default('skip')) != 'copy'
+  tasks:
+    - name: Merge Finder and system settings from the latest backup
+      ansible.builtin.shell: >-
+        {{ ansible_playbook_python | quote }}
+        {{ (playbook_dir + '/files/copy_time_machine_downloads.py') | quote }}
+        --system-settings
+        {{ settings_source_bundle | quote }}
+        {{ lookup('env', 'HOME') | quote }}
+        {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-settings.jsonl') | quote }}
+        {{ settings_env | quote }}
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
+      args:
+        executable: /bin/bash
+      environment:
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        PYTHONDONTWRITEBYTECODE: '1'
+      register: settings_copy
+      # The helper prints its JSON summary only on success; its error message
+      # was already shown in the terminal above.
+      changed_when: settings_copy.rc == 0 and (settings_copy.stdout | from_json).domains | length > 0
+      failed_when: false
+      when: time_machine_copy_settings == 'copy'
+
+    - name: Stop with a short explanation when merging settings failed
+      ansible.builtin.fail:
+        msg: >-
+          Merging settings failed: {{ (settings_copy.stderr_lines | default([]) | last)
+          | default('see the message printed above this task.', true) }}
+          The backup was only read. Earlier steps and
+          your saved answers remain; fix the problem and rerun provisioning.
+      when: time_machine_copy_settings == 'copy' and settings_copy.rc != 0
+
+    - name: Report the settings merge
+      vars:
+        settings_summary: "{{ settings_copy.stdout | from_json }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ settings_env }}: merged settings from backup {{ settings_summary.backup }}
+          into {{ settings_summary.domains | length }} domain(s) {{ settings_summary.domains }}
+          (planned {{ settings_summary.planned | length }}; unchanged ones are skipped).
+          Finder, Dock and the menu bar were restarted. Undo restores your previous settings.
+      when: time_machine_copy_settings == 'copy'

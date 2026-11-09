@@ -1,0 +1,95 @@
+- name: Ask whether to copy Finder, Dock and system settings from the selected backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD merges all listed preference domains; TEST merges only the Finder domain.
+    settings_env: "{{ provision_env | default('PROD') }}"
+    settings_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # Asked only after the wizard has a copy source; never for cancelled or
+    # TODO paths, and never when the user chose to start with an empty backup.
+    - name: Skip unless a backup to copy data from was selected
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_action | default('cancelled')) != 'create' or
+        (time_machine_copy_from | default(none)) in [none, 'none'] or
+        (time_machine_saved_cancelled | default(false))
+
+    # The user chose "Continue without" in full-disk-access_playbook.yml.
+    - name: Explain that Finder and system settings are not copied without Full Disk Access
+      ansible.builtin.debug:
+        msg: >-
+          Skipped copying Finder and system settings: {{ full_disk_access_app | default('the terminal app') }}
+          has no Full Disk Access. Enable it, quit and reopen the app, then rerun
+          provisioning to copy them. Your saved answers are unchanged.
+      when: not (provision_full_disk_access | default(true) | bool)
+
+    - name: Skip the settings copy without Full Disk Access
+      ansible.builtin.meta: end_play
+      when: not (provision_full_disk_access | default(true) | bool)
+  tasks:
+    - name: Validate the provisioning environment
+      ansible.builtin.assert:
+        that: settings_env in ['PROD', 'TEST']
+        fail_msg: HOMELAB_PROVISION_ENV must be PROD or TEST.
+
+    - name: Ask whether to copy apps and preferences from the selected backup
+      ansible.builtin.shell: |
+        if [ "$SETTINGS_ENV" = TEST ]; then
+          scope='TEST environment: only the Finder preferences are merged.'
+        else
+          scope='Merges Finder, Dock, Spaces, trackpad/mouse, keyboard shortcuts, input sources, screenshot, clock, Control Center, accessibility and global preferences.'
+        fi
+        message="Copy Finder and system settings from the latest backup in $SOURCE_NAME into this Mac?\n\n$scope Keys from the backup win; other keys stay. Your current settings are saved first and undo restores them. Finder, Dock and the menu bar restart.\n\nThe terminal running provisioning needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access) to read backup contents."
+        dialog --clear --stdout --cr-wrap --title 'Copy settings from backup' \
+          --ok-label Continue --cancel-label Abort --default-button cancel \
+          --menu "$message" 18 80 2 \
+          copy "Merge Finder and system settings from $SOURCE_NAME" \
+          skip 'Do not copy Finder or system settings' \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        SETTINGS_ENV: "{{ settings_env }}"
+        SOURCE_NAME: "{{ settings_source_bundle | basename | regex_replace('\\.sparsebundle$', '') }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_CANCEL: '1'
+        DIALOG_ESC: '255'
+      register: settings_answer
+      changed_when: false
+      failed_when: false
+      when: "'time_machine.settings' not in (provision_saved_answers | default({}))"
+
+    - name: Stop after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Copying settings cancelled. Nothing was copied; earlier provisioning steps remain applied.'
+             if settings_answer.rc in [1, 255] else
+             'Could not show the settings dialog. Run provisioning from an interactive Terminal.' }}
+      when: not (settings_answer.skipped | default(false)) and settings_answer.rc != 0
+
+    - name: Decide whether to copy settings
+      ansible.builtin.set_fact:
+        time_machine_copy_settings: >-
+          {{ (provision_saved_answers['time_machine.settings'] | default('skip'))
+             if (settings_answer.skipped | default(false)) else settings_answer.stdout }}
+
+    - name: Validate the settings choice
+      ansible.builtin.assert:
+        that: time_machine_copy_settings in ['copy', 'skip']
+        fail_msg: No valid settings copy choice was selected.
+
+    - name: Remember the settings choice
+      ansible.builtin.include_tasks: tasks/save-wizard-answer.yml
+      vars:
+        wizard_answer_key: time_machine.settings
+        wizard_answer_value: "{{ time_machine_copy_settings }}"
+      when: not (settings_answer.skipped | default(false))
