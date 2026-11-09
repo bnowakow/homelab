@@ -31,11 +31,33 @@
 - name: "{{ ai_tool.name }}: sign in"
   when: not ai_signed_in
   block:
+    # Open by path first: right after installation Launch Services may not know
+    # the new app yet, so `open -a NAME` can fail on a fresh Mac. Never fatal.
     - name: "{{ ai_tool.name }}: open the app so you can sign in"
-      ansible.builtin.command:
-        argv: [open, -a, "{{ ai_tool.app }}"]
+      ansible.builtin.shell: |
+        for attempt in 1 2 3 4 5; do
+          for bundle in "/Applications/$APP.app" "$HOME/Applications/$APP.app"; do
+            if [ -d "$bundle" ] && open "$bundle"; then echo opened; exit 0; fi
+          done
+          open -a "$APP" 2>/dev/null && { echo opened; exit 0; }
+          sleep 2
+        done
+        echo not-opened
+      args:
+        executable: /bin/bash
+      environment:
+        APP: "{{ ai_tool.app }}"
+      register: ai_open
       changed_when: false
+      failed_when: false
       when: ai_tool.kind == 'desktop'
+
+    - name: "{{ ai_tool.name }}: tell that the app could not be opened"
+      ansible.builtin.debug:
+        msg: >-
+          {{ ai_tool.name }} could not be opened automatically (it is not in /Applications
+          yet). Open it yourself from Launchpad or Spotlight, or choose Skip below.
+      when: ai_tool.kind == 'desktop' and 'not-opened' in ai_open.stdout
 
     - name: "{{ ai_tool.name }}: ask how to proceed"
       ansible.builtin.shell: |
@@ -46,7 +68,11 @@
         else
           first_tag=done
           first_text="I have signed in to the app"
-          intro="$NAME is not signed in. It is open now: sign in in its window, then choose the first option."
+          if [ "$OPENED" = true ]; then
+            intro="$NAME is not signed in. It is open now: sign in in its window, then choose the first option."
+          else
+            intro="$NAME is not signed in. Open it yourself (Launchpad or Spotlight), sign in, then choose the first option."
+          fi
         fi
         dialog --clear --stdout --cr-wrap --title "Sign in: $NAME" \
           --ok-label Continue --cancel-label Abort --default-button cancel \
@@ -59,6 +85,7 @@
       environment:
         KIND: "{{ ai_tool.kind }}"
         NAME: "{{ ai_tool.name }}"
+        OPENED: "{{ 'true' if ai_tool.kind == 'cli' or 'not-opened' not in ai_open.stdout else 'false' }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
         TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
         DIALOG_ERROR: '70'
