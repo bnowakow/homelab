@@ -207,7 +207,9 @@
   failure, and for App Store apps treats the first `sudo mas install` as the
   sign-in check (mas 7 cannot report it). mas 7 has no account id either: each mas app in apps.json names its Apple ID in
   "account" (app_store_accounts gives the order) and the installer asks the user to
-  switch the App Store account and confirm before each account's apps. Developer Homebrew tools live in
+  switch the App Store account and confirm before each account's apps. After a
+  non-normal account was used, always ask to switch back to the normal one, even with
+  nothing left to install there. Developer Homebrew tools live in
   dev-tools_playbook.yml (per-package installs, disabled casks skipped, third-party
   taps trusted only per named formula/cask via brew trust, recorded in
   dev-tools-taps/-trusted for undo).

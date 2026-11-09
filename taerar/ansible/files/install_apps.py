@@ -110,12 +110,18 @@ def main():
         normal = order[-1] if order else ""
         groups = [(account, [a for a in store if a.get("account", normal) == account]) for account in accounts]
         groups = [(account, group) for account, group in groups if group]
+        signed_in_as = None   # the account the user confirmed last (None: not switched)
         for number, (account, group) in enumerate(groups):
             if number > 0 or account != normal:
                 if not confirm_account_switch(tty, account, [a["name"] for a in group]):
                     summary["failed"] += [a["name"] + f" (App Store account {account} not used)" for a in group]
                     continue
+                signed_in_as = account
             install_store_group(group, summary, tty)
+        # Always hand the App Store back to the normal account after another
+        # account was used, even when no app of the normal account is left.
+        if normal and signed_in_as not in (None, normal):
+            confirm_account_switch(tty, normal, [])
     print(json.dumps(summary))
     return 0
 
@@ -151,12 +157,16 @@ def confirm_account_switch(tty, account, names):
     """Ask the user to switch the App Store to this Apple ID and confirm.
     The dialog appears with --unattended too; Skip is the default."""
     run(["open", "-a", "App Store"], tty)
-    text = (f"Switch the App Store to the Apple ID {account} to install:\n\n" + ", ".join(names) +
-            "\n\nIn the App Store app that just opened, sign out (Store > Sign Out) and sign in with "
-            f"{account}, then choose 'I switched'.")
+    if names:
+        text = (f"Switch the App Store to the Apple ID {account} to install:\n\n" + ", ".join(names) +
+                "\n\nIn the App Store app that just opened, sign out (Store > Sign Out) and sign in with "
+                f"{account}, then choose 'I switched'.")
+    else:
+        text = (f"All App Store apps of the other account are done. Switch the App Store back to your "
+                f"main Apple ID {account} (Store > Sign Out, then Sign In), then choose 'I switched'.")
     if shutil_which("dialog"):
         result = run(["dialog", "--clear", "--cr-wrap", "--title", "Switch App Store account",
-                      "--default-button", "cancel", "--yes-label", "I switched", "--no-label", "Skip these apps",
+                      "--default-button", "cancel", "--yes-label", "I switched", "--no-label", "Skip these apps" if names else "Not now",
                       "--yesno", text, "16", "76"], tty)
         return result.returncode == 0
     print(text, file=sys.stderr)
