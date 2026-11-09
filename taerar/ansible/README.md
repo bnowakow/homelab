@@ -165,7 +165,7 @@ After bootstrap, `terminal-ui_playbook.yml` installs `dialog` and records its
 new dependencies for undo. Other Makefile dependencies still run later.
 Then `provision.sh` runs `onepassword_playbook.yml` before GitHub
 login. It installs the Homebrew `1password` cask and `mas` if missing, then uses
-`sudo -A mas get 1569813296` (mas 7 needs root; tasks have no terminal, so `files/sudo-askpass.sh` shows a hidden dialog password prompt that only sudo receives) to install [1Password for Safari](https://apps.apple.com/us/app/1password-for-safari/id1569813296?mt=12).
+`sudo -A mas get 1569813296` (mas 7 needs root; tasks have no terminal, so `files/sudo-askpass.sh` (called through a temporary wrapper that bakes in the terminal, because sudo cleans the environment) shows a hidden dialog password prompt that only sudo receives) to install [1Password for Safari](https://apps.apple.com/us/app/1password-for-safari/id1569813296?mt=12).
 Existing applications are preserved. The Mac App Store can require Apple Account
 or administrator authentication even with `--unattended`.
 

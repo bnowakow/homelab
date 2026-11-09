@@ -11,6 +11,7 @@ In the TEST environment only one representative cask and one App Store app
 (marked "test" in the catalog) are installed; the rest is only reported.
 One failed install never stops the others. The last stdout line is a JSON summary.
 """
+import atexit
 import json
 import os
 import subprocess
@@ -94,7 +95,10 @@ def main():
         # mas 7 has no way to report the App Store sign-in and needs root to
         # install, so the first install is the check: when it fails, open the
         # App Store, let the user sign in and retry, or skip the store apps.
-        os.environ["SUDO_ASKPASS"] = str(Path(__file__).with_name("sudo-askpass.sh"))
+        wrapper = subprocess.run([str(Path(__file__).with_name("sudo-askpass-wrapper.sh")), str(state), tty],
+                                 capture_output=True, text=True, check=True).stdout.strip()
+        os.environ["SUDO_ASKPASS"] = wrapper
+        atexit.register(lambda: Path(wrapper).unlink(missing_ok=True))
         run(["sudo", "-A", "-v"], tty)
         signed_in = False
         skipped = False
