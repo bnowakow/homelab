@@ -327,7 +327,7 @@ those settings using private file formats.
 
 `apps_playbook.yml` (runs after `dev-tools_playbook.yml`) installs the applications
 listed in `files/apps.json`: Homebrew casks, App Store apps through `mas install`
-(mas cannot report the sign-in, so the first install is the check: on failure the App Store opens and you sign in and retry, or skip the store apps) and, for apps with neither, a final
+(mas cannot report the sign-in, so the first install is the check: on failure the App Store opens and you sign in and retry, or skip the store apps; mas 7 cannot report or change the account, so apps bought with another Apple ID are marked `"account": "second"` in `apps.json`: after the first group the installer asks you to switch the App Store to that Apple ID and confirm, installs those apps, then asks you to switch back and confirm before the rest, with dialogs also under `--unattended`) and, for apps with neither, a final
 list of what to install by hand with the reason (for example Camtasia 2, whose
 license covers only version 2.x, and DxO PhotoLab 9). Apps already present in
 `/Applications` or `~/Applications` are skipped, one failed install never stops

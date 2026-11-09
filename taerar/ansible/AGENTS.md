@@ -205,7 +205,9 @@
   installs missing apps (TEST installs only the "test" ones), records casks in
   apps-casks and formulae in apps-formulae before installing, never stops on one
   failure, and for App Store apps treats the first `sudo mas install` as the
-  sign-in check (mas 7 cannot report it). Developer Homebrew tools live in
+  sign-in check (mas 7 cannot report it). mas 7 has no account id either: apps bought
+  with another Apple ID carry "account": "second" in apps.json and are installed
+  between two confirmed account switches (second account first, then back). Developer Homebrew tools live in
   dev-tools_playbook.yml (per-package installs, disabled casks skipped, third-party
   taps trusted only per named formula/cask via brew trust, recorded in
   dev-tools-taps/-trusted for undo).

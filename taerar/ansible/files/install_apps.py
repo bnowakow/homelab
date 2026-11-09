@@ -91,34 +91,74 @@ def main():
             (summary["installed"] if result.returncode == 0 else summary["failed"]).append(app["name"])
     if store:
         merge_manifest(state / "apps-mas", [str(a["mas"]) for a in store])
-        # mas 7 has no way to report the App Store sign-in and needs root to
-        # install, so the first install is the check: when it fails, open the
-        # App Store, let the user sign in and retry, or skip the store apps.
+        # mas 7 cannot report or change the App Store account and needs root to
+        # install. Apps marked "account": "second" were bought with another
+        # Apple ID: install them first after the user switched to that account,
+        # then ask to switch back for the rest.
         os.environ["SUDO_ASKPASS"] = str(Path(__file__).with_name("sudo-askpass.sh"))
         run(["sudo", "-A", "-v"], tty)
-        signed_in = False
-        skipped = False
-        for app in store:
-            if skipped:
-                summary["failed"].append(app["name"] + " (App Store not signed in)")
-                continue
-            while True:
-                print(f"Installing {app['name']} from the App Store", file=sys.stderr, flush=True)
-                result = run(["sudo", "-A", "mas", "install", str(app["mas"])], tty)
-                if result.returncode == 0:
-                    signed_in = True
-                    summary["installed"].append(app["name"])
-                    break
-                if signed_in or os.environ.get("UNATTENDED") == "true":
-                    summary["failed"].append(app["name"])
-                    skipped = not signed_in
-                    break
-                if not retry_after_sign_in(tty):
-                    summary["failed"].append(app["name"] + " (App Store not signed in)")
-                    skipped = True
-                    break
+        second = [a for a in store if a.get("account") == "second"]
+        main_group = [a for a in store if a.get("account") != "second"]
+        if second:
+            if confirm_account_switch(tty, [a["name"] for a in second], second=True):
+                install_store_group(second, summary, tty)
+            else:
+                summary["failed"] += [a["name"] + " (other App Store account not used)" for a in second]
+            if main_group and not confirm_account_switch(tty, [a["name"] for a in main_group], second=False):
+                summary["failed"] += [a["name"] + " (App Store account not switched back)" for a in main_group]
+                main_group = []
+        install_store_group(main_group, summary, tty)
     print(json.dumps(summary))
     return 0
+
+
+def install_store_group(group, summary, tty):
+    """Install App Store apps for the account that is signed in now. mas 7 has
+    no account command, so the first install is the sign-in check: when it
+    fails, open the App Store, let the user sign in and retry, or skip."""
+    signed_in = False
+    skipped = False
+    for app in group:
+        if skipped:
+            summary["failed"].append(app["name"] + " (App Store not signed in)")
+            continue
+        while True:
+            print(f"Installing {app['name']} from the App Store", file=sys.stderr, flush=True)
+            result = run(["sudo", "-A", "mas", "install", str(app["mas"])], tty)
+            if result.returncode == 0:
+                signed_in = True
+                summary["installed"].append(app["name"])
+                break
+            if signed_in or os.environ.get("UNATTENDED") == "true":
+                summary["failed"].append(app["name"])
+                skipped = not signed_in
+                break
+            if not retry_after_sign_in(tty):
+                summary["failed"].append(app["name"] + " (App Store not signed in)")
+                skipped = True
+                break
+
+
+def confirm_account_switch(tty, names, second):
+    """Ask the user to switch the App Store to another Apple ID and confirm.
+    The dialog appears with --unattended too; Skip is the default."""
+    run(["open", "-a", "App Store"], tty)
+    listed = ", ".join(names)
+    if second:
+        text = ("These apps were bought with another Apple ID:\n\n" + listed +
+                "\n\nIn the App Store app that just opened, sign out (Store > Sign Out) and sign in "
+                "with that Apple ID, then choose 'I switched'. The other App Store apps follow after "
+                "you switch back.")
+    else:
+        text = ("Switch the App Store back to your main Apple ID (Store > Sign Out, then Sign In) "
+                "to install:\n\n" + listed + "\n\nThen choose 'I switched'.")
+    if shutil_which("dialog"):
+        result = run(["dialog", "--clear", "--cr-wrap", "--title", "Switch App Store account",
+                      "--default-button", "cancel", "--yes-label", "I switched", "--no-label", "Skip these apps",
+                      "--yesno", text, "16", "76"], tty)
+        return result.returncode == 0
+    print(text.replace("\\n", "\n"), file=sys.stderr)
+    return False
 
 
 def retry_after_sign_in(tty):
