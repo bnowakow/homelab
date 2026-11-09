@@ -172,7 +172,7 @@
   keep data copies minimal (e.g. one file) for small test machines.
 - After the wizard, if a copy source was chosen, ask with a dialog checklist
   (saved as the list time_machine.folders; Documents, Downloads, Movies, Music,
-  Pictures, code preselected, other home folders offered unselected) which home folders
+  Pictures, code, Sync preselected, other home folders offered unselected) which home folders
   to copy from the latest backup in that bundle. Attach read-only and always detach; unlock encrypted volumes only
   through an interactive password prompt and never store it. Never overwrite
   existing files; check free space first. Record each created file/folder in
@@ -276,3 +276,17 @@
 - `mas install` only installs apps the signed-in Apple ID already got; a free app it
   never downloaded fails with "No downloads initiated", so the installer falls back to
   `mas get` before reporting a failure.
+- ~/code from the backup (PROD): never copy a repository's .git or tracked files over a
+  repository that already exists here (for example ~/code/homelab). Copy only its untracked,
+  non-ignored files and apply the backup's uncommitted changes (`git diff HEAD --binary`) with
+  `git apply` only when it applies cleanly; otherwise save the patch and report it. Read the
+  backup repositories only (safe.directory=*, GIT_OPTIONAL_LOCKS=0). Record applied patches in
+  the folder manifest so undo can reverse them, and treat a repository whose .git is in the
+  manifest as created by us (full resume).
+- The quit-an-app dialog (tasks/wait-for-app-quit.yml) also offers Skip copy (dialog help
+  button, exit 2): the caller skips that copy for this run without saving an answer. Keep the
+  four button labels short so they fit on one row at 80 columns.
+- Every backup copy records started/done/failed (and skipped) per step in
+  ~/.homelab-provision-state/copy-status.json through files/copy_status.py (written by
+  copy_time_machine_downloads.py itself); new copy steps must go through that helper, and undo
+  removes the file.

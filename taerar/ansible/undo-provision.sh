@@ -46,6 +46,19 @@ entries = [json.loads(line) for line in open(sys.argv[1]) if line.strip()]
 removed = kept = 0
 for entry in reversed(entries):
     path = entry["path"]
+    if entry["type"] == "patch":
+        # Uncommitted changes applied to an existing repository: reverse them
+        # only when the reverse applies cleanly (nothing edited on top).
+        import subprocess
+        base = ["git", "-c", "safe.directory=*", "-C", path, "apply", "-R"]
+        patch = entry.get("patch", "")
+        if os.path.isdir(path) and os.path.isfile(patch) and subprocess.run(base + ["--check", patch], capture_output=True).returncode == 0:
+            subprocess.run(base + [patch], check=True)
+            removed += 1
+        else:
+            kept += 1
+            print("Kept applied changes in " + path + " (they were edited since, or the repository is gone).")
+        continue
     if entry["type"] == "replaced":
         # A file replaced from the backup (Finder sidebar): put the original back.
         backup = entry.get("backup")
@@ -261,6 +274,7 @@ PY
   # This stage was installed last. Remove casks before their formula dependencies.
   # Reverse the final provisioning step before removing its dependencies.
   rm -f -- "$repo_dir/taerar/ansible/time-machine-choices.json"
+  rm -f -- "$state_dir/copy-status.json"
 
   # Catalog apps were installed after SDKMAN. Casks are removed; App Store apps
   # and app data stay (uninstall them manually; the ids are in apps-mas).

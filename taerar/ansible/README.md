@@ -343,6 +343,26 @@ environment only one representative cask (MacPacker) and one App Store app
 (Amphetamine), marked `"test"` in the catalog, are installed and the rest of the
 plan is only printed.
 
+**Known issue: Logitech G HUB does not start on macOS 27 (Darwin 27.2).** The cask
+`logitech-g-hub` (in `files/apps.json`) installs fine: its silent installer puts
+`lghub.app` in `/Applications` and the data in `/Library/Application Support/Logi/LGHUB`
+(`version.json`, `current.json`, `groups.json`, `installation.json`, `depots`, `cache`). But
+`lghub_agent` aborts at once with `mutex lock failed: Invalid argument` (an uncaught
+`std::system_error` in `ThreadWatcher::exitThread`; reports in
+`~/Library/Logs/DiagnosticReports/lghub_agent-*.ips`), so the window shows "Your G HUB
+installation is damaged ... Please reinstall". That message is misleading: the files are
+there and match the Time Machine backup (same build 2026.7.1011216), so reinstalling,
+`brew reinstall --cask logitech-g-hub`, relogging or restoring files from the backup do not
+help. Logitech's download page (`https://www.logitechg.com/pl-pl/software/ghub`) offers no DMG;
+its macOS link is the same `lghub_installer.zip` the cask uses.
+
+**TODO (G HUB):** wait for a G HUB build that runs on this macOS, then check
+`brew upgrade --cask logitech-g-hub` and rerun provisioning; report the crash to Logitech with
+the `.ips` reports and the macOS version; after a working build, decide whether to copy G HUB
+settings from the backup (the data is under `/Library/Application Support/Logi/LGHUB`, root
+owned, so it needs sudo through the askpass dialog) and whether `apps_playbook.yml` should skip
+or flag G HUB on macOS versions where it cannot run.
+
 `time-machine-apps-question_playbook.yml` asks (saved as `time_machine.apps`,
 with the other backup questions up front) whether to copy apps and preferences
 from the selected backup, and `time-machine-apps_playbook.yml` does it after the
@@ -590,13 +610,27 @@ saved source no longer exists on the share, the question is asked again.
 **TODO: copying the data is not implemented yet**; this step only records the
 choice and does not read, copy or modify any backup.
 
+### Which copies are done
+
+Every copy from the backup records its state in `~/.homelab-provision-state/copy-status.json`
+(mode 0600; removed by undo), one entry per step: `apps`, `user-files`, `private-data`,
+`system-settings`, `dia`, `dia-extensions` and `folder:<Name>`. The state is `started` (written
+before the backup is attached; it stays that way after Ctrl-C or a kill), `done` (finished
+without error, even if nothing new had to be copied), `failed` (with the error) or `skipped`
+(Skip copy in a quit dialog), plus the time, the bundle, the snapshot and counts. Declined
+questions are in the saved answers (`time-machine-choices.json`, `time_machine.*`). Show it with:
+
+```sh
+python3 taerar/ansible/files/copy_status.py show
+```
+
 ### Copying home folders from the selected backup
 
 After the wizard, when a backup to copy data from was selected (not **Do not
 copy data**), `time-machine-folders-question_playbook.yml` shows a checklist (Space
 toggles) of home folders to copy from the **latest** backup inside that bundle (for
 example `Taerar 7.5.sparsebundle`): Documents, Downloads, Movies, Music,
-Pictures and `code` are selected by default; Desktop, `Sync`, `go` and `Public` are
+Pictures, `code` and `Sync` are selected by default; Desktop, `go` and `Public` are
 offered unselected. Music includes the Music app library. Abort is the default;
 the selection (a list, empty means skip) is saved as `time_machine.folders` and
 reused. The older `time_machine.downloads` answer is ignored.
@@ -611,6 +645,24 @@ copies the selected folders at the end, one after another
 manifest. If the
 question is skipped (no copy source, cancelled, or no Full Disk Access) or
 answered `skip`, the final step does nothing.
+
+**`~/code` and repositories that already exist here.** In `PROD`, `~/code` is copied with one
+rule on top of the usual never-overwrite behavior: a repository that has a `.git` both in the
+backup and on this Mac (for example `~/code/homelab`, cloned by provisioning) is not copied
+over. Its `.git` and tracked files stay as they are, and from the backup only (1) the
+untracked, non-ignored files (`git ls-files --others --exclude-standard`, read-only, with
+`safe.directory=*` and optional locks off) are copied, and (2) its uncommitted changes to
+tracked files (`git diff HEAD --binary`, staged and unstaged) are applied to the working tree
+here with `git apply`, only when they apply cleanly (the index is not touched, existing edits
+are never overwritten). Anything else is reported and the patch is saved in
+`~/.homelab-provision-state/time-machine-folder-code-work/patches/<repo>.patch`: when the
+backup's HEAD commit is not in the clone here, when the patch conflicts, or when git cannot be
+read. Stashes in the backup and ignored files (for example `node_modules`) are not copied; the
+number of stashes is reported. A repository that exists only in the backup is copied as it is,
+`.git` included, and an interrupted copy of it resumes in full on the next run because its
+`.git` is recorded in the manifest. Each applied patch is recorded in
+`time-machine-folder-code.jsonl`; undo reverses it with `git apply -R` only if nothing was
+edited on top, and a rerun reports `already applied`.
 
 `files/copy_time_machine_downloads.py` then:
 
@@ -748,7 +800,10 @@ file Dia already created is kept, not replaced. The step checks whether Dia is
 running first (`tasks/wait-for-app-quit.yml`): if it is, a dialog asks you to quit
 it (Cmd+Q) and confirm, then checks again, repeating until Dia is closed. Abort
 (the default), no usable terminal, or ten failed checks stop with your answers
-saved, since a browser rewrites its settings when it quits.
+saved, since a browser rewrites its settings when it quits. **Skip copy** (the fourth button,
+also in the Safari/Mail/Messages quit dialogs of the private-data copy) leaves that copy out
+for this run without stopping provisioning; the saved answer is kept, so it is asked again
+next time.
 
 ### Reinstalling Dia extensions from the backup list
 

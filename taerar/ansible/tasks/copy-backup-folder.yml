@@ -41,3 +41,14 @@
       from backup {{ (folder_copy.stdout | from_json).backup }}; skipped
       {{ (folder_copy.stdout | from_json).skipped_existing }} existing item(s).
       Undo removes only the copied items that are still unchanged.
+
+# ~/code only: repositories that already exist here were not copied over; their
+# uncommitted changes from the backup were applied as patches (or saved).
+- name: "Report the repositories of ~/{{ folder_name }} that already existed here"
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.repo }}: uncommitted changes from the backup: {{ item.status }}
+      ({{ item.untracked }} untracked file(s) copied{{ '; ' ~ item.stashes ~ ' stash(es) in the backup were not copied' if item.stashes else '' }}){{ '; patch: ' ~ item.patch if item.patch is defined else '' }}
+  loop: "{{ (folder_copy.stdout | from_json).repos | default([]) }}"
+  loop_control:
+    label: "{{ item.repo }}"

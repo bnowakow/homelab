@@ -21,6 +21,10 @@
         (time_machine_saved_cancelled | default(false)) or
         (time_machine_copy_files | default('skip')) != 'copy'
   tasks:
+    - name: Forget any earlier skip choice
+      ansible.builtin.set_fact:
+        quit_skip_copy: false
+
     - name: Ask to quit the apps whose data is copied
       ansible.builtin.include_tasks: tasks/wait-for-app-quit.yml
       vars:
@@ -31,7 +35,24 @@
         - {process: Safari, name: Safari}
         - {process: Mail, name: Mail}
         - {process: Messages, name: Messages}
-      when: time_machine_copy_files == 'copy'
+      when: time_machine_copy_files == 'copy' and not (quit_skip_copy | default(false))
+
+    # "Skip this copy" in a quit dialog: leave the whole private-data copy out for
+    # this run (the saved answer is kept, so it is asked again next time).
+    - name: Skip copying private data when the user chose to
+      ansible.builtin.debug:
+        msg: "Skipped copying the private data (Keychains, Safari, Messages, Mail). Rerun provisioning to copy it."
+      when: quit_skip_copy | default(false)
+
+    - name: Record the skipped private data copy
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/files/copy_status.py", set, private-data, skipped, "reason=an app was running and the user chose Skip copy"]
+      changed_when: false
+      when: quit_skip_copy | default(false)
+
+    - name: End this step when the private data copy was skipped
+      ansible.builtin.meta: end_play
+      when: quit_skip_copy | default(false)
 
     - name: Install Homebrew rsync for copying files from backups
       ansible.builtin.include_tasks: tasks/install-rsync.yml

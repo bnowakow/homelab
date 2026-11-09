@@ -57,7 +57,7 @@
           Pictures '~/Pictures' on \
           Desktop '~/Desktop' off \
           code '~/code (projects; existing folders are kept)' on \
-          Sync '~/Sync (Syncthing folder)' off \
+          Sync '~/Sync (Syncthing folder)' on \
           go '~/go (Go workspace)' off \
           Public '~/Public' off \
           < "$PROVISION_TTY" 2> "$PROVISION_TTY"

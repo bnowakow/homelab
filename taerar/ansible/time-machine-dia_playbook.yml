@@ -168,6 +168,10 @@
 
     # A running browser rewrites its settings when it quits, so copy only while
     # it is closed.
+    - name: Forget any earlier skip choice
+      ansible.builtin.set_fact:
+        quit_skip_copy: false
+
     - name: Make sure Dia is not running (ask the user to quit it and re-check)
       ansible.builtin.include_tasks: tasks/wait-for-app-quit.yml
       vars:
@@ -175,6 +179,24 @@
         quit_app_name: Dia
         quit_attempt: 1
       when: time_machine_copy_dia == 'copy'
+
+    # "Skip this copy" in the quit dialog: leave the settings copy out for this run
+    # (the saved answer is kept, so it is asked again next time).
+    - name: Skip the Dia settings copy when the user chose to
+      ansible.builtin.set_fact:
+        time_machine_copy_dia: skip
+      when: time_machine_copy_dia == 'copy' and (quit_skip_copy | default(false))
+
+    - name: Record the skipped Dia settings copy
+      ansible.builtin.command:
+        argv: ["{{ ansible_playbook_python }}", "{{ playbook_dir }}/files/copy_status.py", set, dia, skipped, "reason=Dia was running and the user chose Skip copy"]
+      changed_when: false
+      when: quit_skip_copy | default(false)
+
+    - name: Report the skipped Dia settings copy
+      ansible.builtin.debug:
+        msg: "Skipped copying the Dia settings because Dia is still running. Rerun provisioning to copy them."
+      when: quit_skip_copy | default(false)
 
     - name: Install Homebrew rsync for copying files from backups
       ansible.builtin.include_tasks: tasks/install-rsync.yml

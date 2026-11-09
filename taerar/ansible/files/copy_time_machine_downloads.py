@@ -42,6 +42,22 @@ class CopyError(Exception):
     pass
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import copy_status  # noqa: E402  (records which copies were done; see copy_status.py)
+
+# Set by main() once the step is known; None for checks that copy nothing.
+STEP = None
+STEP_DETAIL = {}
+RESULT = {}
+
+
+def emit(result):
+    """Print the JSON summary for Ansible and remember it for the status record."""
+    RESULT.clear()
+    RESULT.update(result)
+    print(json.dumps(result))
+
+
 # Readable only with Full Disk Access; listing it reads no private data.
 FULL_DISK_ACCESS_PROBE = "/Library/Application Support/com.apple.TCC"
 
@@ -601,6 +617,116 @@ def copy_files(files, source_root, destination, manifest, work_dir, snapshot_nam
     return copied, skipped
 
 
+def run_git(repo, *args):
+    """Run git in a repository without ever writing to it or prompting.
+
+    The backup is a read-only snapshot mounted with noowners, so git's ownership
+    check is disabled for these calls and optional index refreshes are off.
+    """
+    return subprocess.run(["git", "-c", "safe.directory=*", "-C", str(repo), *args],
+                          capture_output=True, stdin=subprocess.DEVNULL,
+                          env=dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_TERMINAL_PROMPT="0"))
+
+
+def inspect_backup_repo(repo):
+    """Read-only summary of a backed-up repository: HEAD, uncommitted diff, untracked files."""
+    head = run_git(repo, "rev-parse", "--verify", "HEAD")
+    untracked = run_git(repo, "ls-files", "-z", "--others", "--exclude-standard")
+    diff = run_git(repo, "diff", "HEAD", "--binary", "--no-ext-diff", "--no-textconv")
+    stash = run_git(repo, "stash", "list")
+    if head.returncode or untracked.returncode or diff.returncode:
+        return None
+    return {"head": head.stdout.decode().strip(),
+            "untracked": [os.fsdecode(name) for name in untracked.stdout.split(b"\0") if name],
+            "patch": diff.stdout,
+            "stashes": len([line for line in stash.stdout.splitlines() if line])}
+
+
+def filter_existing_repos(files, source, destination, manifest=None):
+    """Handle repositories that exist in both the backup and this Mac.
+
+    For such a repository only the files git reports as untracked (and not
+    ignored) are kept for copying; its .git folder and tracked files stay as they
+    are here, and the backup's uncommitted changes to tracked files are returned
+    as a patch to apply afterwards. Other folders are copied as they are.
+    """
+    repos = {}
+    # A repository whose .git an earlier (interrupted) run created from the
+    # backup is not "already here": it still needs the normal full copy.
+    created = []
+    if manifest and Path(manifest).is_file():
+        for line in Path(manifest).read_text().splitlines():
+            try:
+                created.append(json.loads(line).get("path", ""))
+            except ValueError:
+                pass
+    for entry in sorted(os.scandir(source), key=lambda item: item.name):
+        if not entry.is_dir(follow_symlinks=False):
+            continue
+        if not (Path(entry.path) / ".git").exists() or not (destination / entry.name / ".git").exists():
+            continue
+        gitdir = str(destination / entry.name / ".git")
+        if any(path == gitdir or path.startswith(gitdir + "/") for path in created):
+            continue
+        info = inspect_backup_repo(Path(entry.path))
+        repos[entry.name] = info if info is not None else {"error": "could not read its git state in the backup"}
+    if not repos:
+        return files, {}
+    kept = []
+    for relative, path in files:
+        name = relative.parts[0] if relative.parts else ""
+        info = repos.get(name)
+        if info is None:
+            kept.append((relative, path))
+            continue
+        if "error" in info:
+            continue
+        inside = "/".join(relative.parts[1:])
+        if any(inside == item or (item.endswith("/") and inside.startswith(item))
+               for item in info["untracked"]):
+            kept.append((relative, path))
+    return kept, repos
+
+
+def apply_repo_patches(repos, destination, manifest, work_dir):
+    """Apply each backup repository's uncommitted changes to the clone here.
+
+    The patch is applied only when it applies cleanly to the working tree (the
+    index is not touched), never over conflicting edits. It is recorded before
+    it is applied so undo can reverse it. Anything else is saved as a patch file
+    and reported.
+    """
+    results = []
+    patch_dir = work_dir / "patches"
+    for name, info in repos.items():
+        result = {"repo": name, "untracked": len([i for i in info.get("untracked", []) if not i.endswith("/")]),
+                  "stashes": info.get("stashes", 0)}
+        results.append(result)
+        if "error" in info:
+            result["status"] = "skipped: " + info["error"]
+            continue
+        if not info["patch"].strip():
+            result["status"] = "no uncommitted changes to tracked files"
+            continue
+        repo = destination / name
+        patch_dir.mkdir(parents=True, exist_ok=True)
+        patch = patch_dir / f"{name}.patch"
+        patch.write_bytes(info["patch"])
+        result["patch"] = str(patch)
+        if run_git(repo, "apply", "-R", "--check", str(patch)).returncode == 0:
+            result["status"] = "already applied"
+        elif run_git(repo, "apply", "--check", str(patch)).returncode == 0:
+            record(manifest, {"type": "patch", "path": str(repo), "patch": str(patch)})
+            applied = run_git(repo, "apply", "--whitespace=nowarn", str(patch))
+            result["status"] = "applied" if applied.returncode == 0 else \
+                "failed: " + applied.stderr.decode(errors="replace").strip()[:200]
+        elif run_git(repo, "cat-file", "-e", info["head"] + "^{commit}").returncode != 0:
+            result["status"] = "not applied: the backup's HEAD commit is not in this clone; patch saved"
+        else:
+            result["status"] = "not applied: does not apply cleanly to the files here; patch saved"
+    return results
+
+
 def copy_apps(catalog, backup, user, manifest, mode):
     """Copy the from_backup app bundles and the preference plists of catalog apps."""
     home = find_user_home(backup, user)
@@ -882,11 +1008,15 @@ def main():
         raise CopyError("Environment must be PROD or TEST.")
     if not bundle.is_dir():
         raise CopyError(f"Backup not found: {bundle}. Connect the Time Machine share in Finder.")
+    global STEP
+    STEP = f"folder:{folder_name}" if what == "folder" else what
     # Fail in seconds, before the slow network attach, when access is missing.
     check_full_disk_access()
+    copy_status.record(STEP, "started", bundle=bundle.name, mode=mode)
     mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-"))
     snapshot_mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-snapshot-"))
     whole = None
+    repos = {}
     try:
         progress(f"Attaching {bundle.name} read-only (this can take a while over the network)...")
         whole, devices, volume = attach(bundle, mountpoint)
@@ -894,23 +1024,23 @@ def main():
         user = os.environ.get("USER") or Path.home().name
         progress(f"Latest backup: {backup.name}")
         if what == "dia-extensions":
-            print(json.dumps({"what": what, "backup": backup.name,
-                              "extensions": list_dia_extensions(find_user_home(backup, user))}))
+            emit({"what": what, "backup": backup.name,
+                              "extensions": list_dia_extensions(find_user_home(backup, user))})
             return
         if what == "private-data":
-            print(json.dumps(copy_private_data(backup, user, manifest, mode)))
+            emit(copy_private_data(backup, user, manifest, mode))
             return
         if what == "user-files":
-            print(json.dumps(copy_user_files(backup, user, manifest, mode)))
+            emit(copy_user_files(backup, user, manifest, mode))
             return
         if what == "system-settings":
             try:
-                print(json.dumps(copy_system_settings(backup, user, manifest, mode)))
+                emit(copy_system_settings(backup, user, manifest, mode))
             except PermissionError as error:
                 raise CopyError(FULL_DISK_ACCESS) from error
             return
         if what == "apps":
-            print(json.dumps(copy_apps(catalog, backup, user, manifest, mode)))
+            emit(copy_apps(catalog, backup, user, manifest, mode))
             return
         try:
             if what == "dia":
@@ -923,6 +1053,11 @@ def main():
                 if not source.is_dir() or source.is_symlink():
                     raise CopyError(f"The latest backup has no {folder_name} folder for user {user}.")
                 files = plan_copy(source, mode)
+                if folder_name == "code" and mode == "PROD":
+                    files, repos = filter_existing_repos(files, source, destination, manifest)
+                    for repo_name in repos:
+                        progress(f"[~/code] {repo_name} already exists here: copying only its untracked files "
+                                 "and applying its uncommitted changes as a patch (its .git is not copied).")
             else:
                 source = find_downloads(backup, user)
                 files = plan_copy(source, mode)
@@ -942,11 +1077,15 @@ def main():
         progress(f"[{what if what != 'folder' else '~/' + folder_name}] Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
                  f"{len(files) - new} already present will be kept...")
         copied, skipped = copy_files(files, source, destination, manifest, work_dir, backup.name)
+        repo_results = apply_repo_patches(repos, destination, manifest, work_dir) if repos else []
+        for item in repo_results:
+            progress(f"[~/code] {item['repo']}: uncommitted changes: {item['status']}"
+                     + (f" ({item['stashes']} stash(es) in the backup were not copied)" if item["stashes"] else ""))
         extensions = list_dia_extensions(source) if what == "dia" else []
-        print(json.dumps({"what": what, "backup": backup.name, "mode": mode, "copied": copied,
-                          "extensions": extensions,
+        emit({"what": what, "backup": backup.name, "mode": mode, "copied": copied,
+                          "extensions": extensions, "repos": repo_results,
                           "skipped_existing": skipped,
-                          "copied_names": [str(relative) for relative, _ in files][:5]}))
+                          "copied_names": [str(relative) for relative, _ in files][:5]})
     finally:
         # Unmount our snapshot mount first; it would otherwise keep the image busy.
         if os.path.ismount(snapshot_mountpoint):
@@ -961,8 +1100,25 @@ def main():
                 pass
 
 
+def finish_status(state, **detail):
+    """Remember the outcome of this copy; never let bookkeeping break a copy."""
+    if STEP is None:
+        return
+    try:
+        copy_status.record(STEP, state, **detail)
+    except (OSError, ValueError):
+        pass
+
+
 if __name__ == "__main__":
     try:
         main()
     except CopyError as error:
+        finish_status("failed", error=str(error)[:300])
         sys.exit(str(error))
+    else:
+        detail = {key: value for key, value in RESULT.items()
+                  if key != "what" and isinstance(value, (int, str)) and not isinstance(value, bool)}
+        if RESULT.get("repos"):
+            detail["repos"] = [{"repo": item["repo"], "status": item["status"]} for item in RESULT["repos"]]
+        finish_status("done", **detail)
