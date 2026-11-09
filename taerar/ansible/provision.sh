@@ -132,6 +132,17 @@ elif [[ ! -e "$repo_dir/.git" ]]; then
   exit 1
 else
   echo "Reusing homelab checkout: $repo_dir"
+  # Playbooks run from this checkout, so bring it up to date when that cannot
+  # lose anything: a clean tree on a branch that fast-forwards. Never fatal.
+  if [[ -z "$(git -C "$repo_dir" status --porcelain 2>/dev/null)" ]]; then
+    if git -C "$repo_dir" pull --ff-only --quiet 2>/dev/null; then
+      echo 'Updated the checkout to the latest commit.'
+    else
+      echo 'Could not update the checkout (offline or diverged); continuing with the existing files.'
+    fi
+  else
+    echo 'The checkout has local changes; not updating it.'
+  fi
 fi
 
 find_brew() {

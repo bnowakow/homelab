@@ -53,7 +53,7 @@ GitHub link, open the `homelab` repository, and browse to
 
 The script creates `~/code` if needed and clones
 `https://github.com/bnowakow/homelab.git` into `~/code/homelab` if that path is
-missing. Existing checkouts are reused. After GitHub login, an Ansible playbook changes
+missing. Existing checkouts are reused and fast-forwarded to the latest commit when they have no local changes. After GitHub login, an Ansible playbook changes
 `origin` to `git@github.com:bnowakow/homelab.git`. Git must be available to clone; on a fresh
 Mac the script first checks for the Command Line Tools and installs them from the
 terminal with `sudo softwareupdate` (sudo asks for your password, also with
