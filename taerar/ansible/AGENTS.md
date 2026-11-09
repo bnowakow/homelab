@@ -170,9 +170,10 @@
   Git-ignored taerar/ansible/.env (parsed as text, never sourced), else PROD.
   Pass it to playbooks as provision_env; keep .env.sample at PROD. TEST must
   keep data copies minimal (e.g. one file) for small test machines.
-- After the wizard, if a copy source was chosen, ask (saved as
-  time_machine.downloads) whether to copy ~/Downloads from the latest backup in
-  that bundle. Attach read-only and always detach; unlock encrypted volumes only
+- After the wizard, if a copy source was chosen, ask with a dialog checklist
+  (saved as the list time_machine.folders; Documents, Downloads, Movies, Music,
+  Pictures preselected, other home folders offered unselected) which home folders
+  to copy from the latest backup in that bundle. Attach read-only and always detach; unlock encrypted volumes only
   through an interactive password prompt and never store it. Never overwrite
   existing files; check free space first. Record each created file/folder in
   the state directory before creating it; undo removes only unchanged copies and
@@ -182,11 +183,13 @@
   Do not use tmutil to list/mount backups (root-owned mounts, wrong owners, busy
   image). Unmount the snapshot before detaching; fall back to diskutil eject.
 - Ask all backup questions up front, right after the wizard, and run the slow
-  ~/Downloads copy as the very last provisioning step (question in
-  time-machine-downloads-question_playbook.yml, copy in
-  time-machine-downloads_playbook.yml; the copy is skipped when the answer
-  fact is unset or skip).
-- After the Downloads question, ask (saved as time_machine.dia) whether to copy Dia
+  home folders copy as the very last provisioning step (question in
+  time-machine-folders-question_playbook.yml, one resumable rsync copy per folder
+  in time-machine-folders_playbook.yml via tasks/copy-backup-folder.yml with its
+  own manifest time-machine-folder-<Name>.jsonl; skipped when the list is empty).
+  Try to mount the Time Machine share automatically (open smb://...) before
+  falling back to the manual Finder dialog; never handle the NAS password.
+- After the folders question, ask (saved as time_machine.dia) whether to copy Dia
   configuration from the same selected backup. Copy only the plain settings
   listed in DIA_CONFIG (never cookies, logins, history, caches, Dia's encrypted
   databases such as tabs.db, nor extension code or Secure Preferences, which the
@@ -196,7 +199,24 @@
   Chrome Web Store page in Dia for each extension listed in the backup (read-only
   manifests) that this Dia has not registered; the user clicks Add to Dia, TEST
   opens one. Share the Full Disk Access and share-mounted conditions with
-  Downloads: skip only when all three backup-reading questions are declined.
+  the folders: skip only when all backup-reading questions are declined.
+- App installs: keep files/apps.json (casks, mas ids, manual notes, from_backup
+  entries, "test": true representatives) aligned with README. apps_playbook.yml
+  installs missing apps (TEST installs only the "test" ones), records casks in
+  apps-casks and formulae in apps-formulae before installing, never stops on one
+  failure, and for App Store apps treats the first `sudo mas install` as the
+  sign-in check (mas 7 cannot report it). Developer Homebrew tools live in
+  dev-tools_playbook.yml (per-package installs, disabled casks skipped, third-party
+  taps trusted only per named formula/cask via brew trust, recorded in
+  dev-tools-taps/-trusted for undo).
+- Backup copies besides folders: time-machine-apps (app bundles with from_backup
+  plus preference plists of installed catalog apps, skipping running apps),
+  time-machine-user-files (.ssh, Fonts, LaunchAgents not loaded, Services,
+  Scripts, Finder sidebar replaced after saving the original) and
+  time-machine-settings (Finder, Dock, system, Music, Mail domains merged with
+  `defaults export/import`, originals saved for undo). Use
+  tasks/wait-for-app-quit.yml to ask the user to quit an app and re-check
+  before touching its settings.
 - Copy any files from Time Machine backups with Homebrew rsync 3.x (-lptX,
   --append, --files-from), never macOS openrsync or Python copies, which drop
   extended attributes. Install the rsync formula through Ansible only when a
@@ -207,7 +227,7 @@
   use --ignore-existing or --inplace against the destination, and never reuse
   staged data from another snapshot.
 - Check Full Disk Access early (full-disk-access_playbook.yml, right after the
-  saved-choices review) whenever the Downloads copy may still happen. Name the
+  saved-choices review) whenever a home folder copy may still happen. Name the
   outermost .app; offer Abort (default), Open Settings (opens the Full Disk
   Access pane, then re-shows the dialog) or Continue without, which skips the
   copy with a message. Never grant access or save this state; it requires an

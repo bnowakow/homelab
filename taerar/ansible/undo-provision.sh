@@ -217,7 +217,13 @@ PY
   fi
 
   # Files copied from Time Machine backups were the final steps, in reverse order:
-  # ~/Downloads, then the apps and preferences, then the Dia settings.
+  # the home folders (and the older ~/Downloads manifest), then the apps and preferences, then the Dia settings.
+  local folder_manifest folder_name
+  for folder_manifest in "$state_dir"/time-machine-folder-*.jsonl; do
+    [[ -e "$folder_manifest" ]] || continue
+    folder_name=$(basename "$folder_manifest" .jsonl)
+    undo_copied_files "$state_dir" "$folder_name" "files copied into ~/${folder_name#time-machine-folder-}" || return 1
+  done
   undo_copied_files "$state_dir" time-machine-downloads 'files copied into ~/Downloads' || return 1
   # Finder and system settings were merged with `defaults`; restore the saved originals.
   if [[ -f "$state_dir/time-machine-settings.jsonl" ]]; then

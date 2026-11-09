@@ -12,7 +12,7 @@
       ansible.builtin.meta: end_play
       when: >-
         (time_machine_saved_cancelled | default(false)) or
-        ((provision_saved_answers | default({})).get('time_machine.downloads') == 'skip' and
+        ((provision_saved_answers | default({})).get('time_machine.folders', none) == [] and
          (provision_saved_answers | default({})).get('time_machine.dia') == 'skip' and
          (provision_saved_answers | default({})).get('time_machine.apps') == 'skip' and
          (provision_saved_answers | default({})).get('time_machine.settings') == 'skip' and

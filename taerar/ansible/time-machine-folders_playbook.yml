@@ -1,0 +1,34 @@
+- name: Copy the chosen home folders from the selected Time Machine backup (the very last step)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD copies the chosen folders; TEST copies only the first file of each.
+    folders_env: "{{ provision_env | default('PROD') }}"
+    folders_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # The question was asked earlier (time-machine-folders-question_playbook.yml);
+    # these long copies run last. The fact stays unset when the question was
+    # skipped (no copy source, cancelled, or no Full Disk Access).
+    - name: Skip unless home folders were chosen
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_saved_cancelled | default(false)) or
+        (time_machine_copy_folders | default([])) | length == 0
+  tasks:
+    - name: Install Homebrew rsync for copying files from backups
+      ansible.builtin.include_tasks: tasks/install-rsync.yml
+
+    # One folder at a time; each has its own manifest and resumable staging, so
+    # after an interruption a rerun continues with the unfinished folder.
+    - name: Copy each chosen home folder from the latest backup
+      ansible.builtin.include_tasks: tasks/copy-backup-folder.yml
+      loop: "{{ time_machine_copy_folders }}"
+      loop_control:
+        loop_var: folder_name
+        index_var: folder_index

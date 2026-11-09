@@ -130,7 +130,7 @@ Or download and run the version from `master`:
 
 Provisioning records its changes in `~/.homelab-provision-state`, including
 attempts that may fail partway through. Undo reverses them in order: remove
-unchanged Dia settings and files copied into `~/Downloads` from a Time Machine backup, remove Makefile dependency packages, restore
+unchanged Dia settings, apps, settings, user files and home folders copied from a Time Machine backup, remove Makefile dependency packages, restore
 the original origin URLs, undo the GitHub login unless retained, remove
 the newly created Prezto checkout/runcom links, remove the Dia browser and the Claude/Codex apps and CLIs it installed
 (sign-ins are kept), restore dotfiles, remove GitHub
@@ -333,7 +333,7 @@ plan is only printed.
 `time-machine-apps-question_playbook.yml` asks (saved as `time_machine.apps`,
 with the other backup questions up front) whether to copy apps and preferences
 from the selected backup, and `time-machine-apps_playbook.yml` does it after the
-Dia step and before the final ~/Downloads copy. It copies the `from_backup` apps
+Dia step and before the final home folders copy. It copies the `from_backup` apps
 of `files/apps.json` that this Mac lacks (ForkLift, Camtasia 2, OpenEmu,
 Transmission Remote GUI, Better Dock, CoreNodeReader, megacleaner, Tailscale-package,
 Vorssaint) into `/Applications` (or `~/Applications` where they
@@ -359,6 +359,10 @@ saving the original in `user-files-backup`, and undo restores it; the sidebar
 bookmarks may point at folders that do not exist here. `TEST` copies one small file.
 `~/.gitconfig` and `~/.zshrc` are not read from the backup: they are repository
 dotfiles installed by `make install-dotfiles` in the dotfiles step.
+
+The settings merge below also covers the `com.apple.Music`, `com.apple.mail`,
+`com.apple.iCal` and `com.apple.Notes` preferences (account setup and the mail or
+message data itself are not copied).
 
 `time-machine-settings-question_playbook.yml` asks (saved as `time_machine.settings`)
 whether to merge Finder and system settings from the backup;
@@ -419,13 +423,17 @@ dialog with these manual steps:
 4. Press **+** to save the server, then **Connect** and complete any NAS login.
 5. Choose **Confirm** when done, or **Abort** to stop provisioning.
 
-The dialog appears only while the share is **not mounted** at
+The playbook first tries to mount the share **automatically** (`open smb://...`,
+so Finder mounts it with the sign-in saved in your Keychain, or macOS asks for the
+NAS password itself; this script never types or sees it) and waits up to 90
+seconds. Only when the share is still missing does the manual dialog appear, only
+while the share is **not mounted** at
 `/Volumes/time-machine` (an `smbfs` mount), and Confirm rechecks: if the share
 is still missing, the dialog returns with a note (for example when Finder
 mounted it as `time-machine-1`). An already-mounted share skips the dialog. A
 saved Finder confirmation or a reused completed Time Machine selection does not
 skip it when the share is unmounted and a later step still needs it (copying
-`~/Downloads` not declined); when nothing needs the share, it is not requested.
+a home folder, Dia, apps, settings or user files copy not declined); when nothing needs the share, it is not requested.
 Abort stops with a short message.
 
 This checkpoint also waits with `--unattended`; Escape aborts. The script does
@@ -543,19 +551,25 @@ saved source no longer exists on the share, the question is asked again.
 **TODO: copying the data is not implemented yet**; this step only records the
 choice and does not read, copy or modify any backup.
 
-### Copying ~/Downloads from the selected backup
+### Copying home folders from the selected backup
 
 After the wizard, when a backup to copy data from was selected (not **Do not
-copy data**), `time-machine-downloads-question_playbook.yml` asks whether to copy
-`~/Downloads` from the **latest** backup inside that bundle (for example
-`Taerar 7.5.sparsebundle`) into this Mac's `~/Downloads`. Abort is the default;
-the answer (`copy` or `skip`) is saved as `time_machine.downloads` and reused.
+copy data**), `time-machine-folders-question_playbook.yml` shows a checklist (Space
+toggles) of home folders to copy from the **latest** backup inside that bundle (for
+example `Taerar 7.5.sparsebundle`): Documents, Downloads, Movies, Music and
+Pictures are selected by default; Desktop, `code`, `Sync`, `go` and `Public` are
+offered unselected. Music includes the Music app library. Abort is the default;
+the selection (a list, empty means skip) is saved as `time_machine.folders` and
+reused. The older `time_machine.downloads` answer is ignored.
 It is cleared when any earlier Time Machine answer changes.
 
 **The copy is the very last provisioning step**, because it can take a long
-time. All the questions (this one, then the two Dia questions) are asked up front,
-right after the wizard, so you can answer them and walk away; Dia is then set up,
-and `time-machine-downloads_playbook.yml` copies `~/Downloads` at the end. If the
+time. All the questions (this one, then the apps, user files, settings and Dia
+questions) are asked up front, right after the wizard, so you can answer them and
+walk away; everything else is set up first, and `time-machine-folders_playbook.yml`
+copies the selected folders at the end, one after another
+(`tasks/copy-backup-folder.yml`), each with its own rsync progress line and
+manifest. If the
 question is skipped (no copy source, cancelled, or no Full Disk Access) or
 answered `skip`, the final step does nothing.
 
@@ -615,14 +629,14 @@ and shows the dialog again; you still turn the app on yourself. macOS applies
 Full Disk Access only after the app restarts, which ends the run, so the
 choices are **Abort** (default: enable it, quit and reopen the app, rerun) or
 **Continue without**, which runs the other steps and skips the
-`~/Downloads` copy with a message instead of failing at the end. Access is
+home folders copy with a message instead of failing at the end. Access is
 checked live on every run and never saved. The Time Machine share must
 be connected in Finder (a reused Finder confirmation does not reconnect it).
 Failures stop with the helper's message, keep saved answers, and can be rerun.
 
 **Environment:** `HOMELAB_PROVISION_ENV` selects `PROD` (default) or `TEST`.
-`PROD` copies all of `~/Downloads` and Dia's configuration. `TEST` copies only the
-first visible top-level file of `~/Downloads` by name and only Dia's `Preferences`,
+`PROD` copies the selected folders and Dia's configuration. `TEST` copies only the
+first visible top-level file of each selected folder by name and only Dia's `Preferences`,
 for trying provisioning on a Mac with little free space.
 `provision.sh` reads it from an exported variable, otherwise from
 `taerar/ansible/.env` (Git-ignored), otherwise uses `PROD`. Copy
@@ -630,14 +644,14 @@ for trying provisioning on a Mac with little free space.
 `KEY=VALUE` text, never sourced, and other values stop provisioning.
 
 Every created file and folder is recorded in
-`~/.homelab-provision-state/time-machine-downloads.jsonl` **before** it is
+`~/.homelab-provision-state/time-machine-folder-<Name>.jsonl` (one per folder) **before** it is
 created, before `rsync` starts.
 
 **Interrupted copies resume.** `rsync` first copies into a staging folder,
-`~/.homelab-provision-state/time-machine-downloads-work/stage/<snapshot>`, on the
+`~/.homelab-provision-state/time-machine-folder-<Name>-work/stage/<snapshot>`, on the
 same volume as the destination, using `--append`. When every file is complete,
 each one is moved into place with an atomic rename, so a half-written file never
-appears in Downloads. After any interruption (Ctrl-C, a closed lid, a crash, a
+appears in the folder. After any interruption (Ctrl-C, a closed lid, a crash, a
 lost network connection or a power loss), rerunning provisioning continues each
 partial file right after the bytes already staged and sends only the rest: a
 test that killed a 40 MB copy at 26 MB re-sent 15 MB, not 42 MB. Finished files
@@ -656,11 +670,11 @@ is kept). Edited files and files that existed before are kept.
 
 ### Copying Dia settings from the selected backup
 
-After the Downloads question, when a backup to copy data from was selected and Dia
+After the folders question, when a backup to copy data from was selected and Dia
 is installed, `time-machine-dia_playbook.yml` asks whether to copy Dia's
 configuration from the **latest** backup in that same bundle. Abort is the
 default; the answer (`copy` or `skip`) is saved as `time_machine.dia` and is
-cleared when an earlier Time Machine answer changes. It reuses the Downloads
+cleared when an earlier Time Machine answer changes. It reuses the home-folder
 machinery: Full Disk Access, the read-only snapshot mount, Homebrew `rsync`
 (installed on demand by the shared `tasks/install-rsync.yml`), and the same
 resumable staging, so files that already exist are never overwritten.
@@ -717,7 +731,7 @@ first page.
 `TEST` copies only `Preferences`. Copied files and created folders are recorded
 before `rsync` starts in `~/.homelab-provision-state/time-machine-dia.jsonl`
 (work files in `time-machine-dia-work`), and undo removes only the files that
-are still unchanged, like for Downloads. The helper is the same
+are still unchanged, like for the home folders. The helper is the same
 `files/copy_time_machine_downloads.py` with `--dia`.
 
 **TODO:** when **New computer** is implemented, ask the same copy question,

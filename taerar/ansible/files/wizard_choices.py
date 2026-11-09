@@ -9,6 +9,8 @@ import tempfile
 
 
 # Stable stored values are independent of menu positions and visible labels.
+HOME_FOLDERS = ["Documents", "Downloads", "Movies", "Music", "Pictures",
+                "Desktop", "code", "Sync", "go", "Public"]
 MENU_VALUES = {
     "action": {"1": "create", "2": "restore"},
     "create": {"1": "new_version", "2": "new_computer"},
@@ -83,7 +85,11 @@ def load(path):
         if value is not None and not valid_copy_source(value):
             raise ValueError("Invalid version to copy data from")
     if answers.get("time_machine.downloads", "copy") not in ["copy", "skip"]:
-        raise ValueError("Invalid Downloads copy choice")
+        raise ValueError("Invalid Downloads copy choice")   # legacy key, no longer asked
+    folders = answers.get("time_machine.folders", [])
+    if (not isinstance(folders, list) or len(set(folders)) != len(folders)
+            or any(folder not in HOME_FOLDERS for folder in folders)):
+        raise ValueError("Invalid home folders choice")
     if answers.get("time_machine.user_files", "copy") not in ["copy", "skip"]:
         raise ValueError("Invalid user files copy choice")
     if answers.get("time_machine.settings", "copy") not in ["copy", "skip"]:
@@ -137,7 +143,8 @@ def format_summary(answers):
         "time_machine.major": "Version selection",
         "time_machine.manual": "Manually entered version",
         "time_machine.copy": "Copy data from",
-        "time_machine.downloads": "Copy ~/Downloads from backup",
+        "time_machine.downloads": "Copy ~/Downloads from backup (legacy answer)",
+        "time_machine.folders": "Copy home folders from backup",
         "time_machine.apps": "Copy apps and preferences from backup",
         "time_machine.settings": "Copy Finder and system settings from backup",
         "time_machine.user_files": "Copy user files (ssh, fonts, login items) from backup",
@@ -159,6 +166,8 @@ def format_summary(answers):
             rendered = copy_source_label(value)
         elif key == "time_machine.dia_extensions":
             rendered = "Open the Chrome Web Store pages" if value == "open" else "Do not open"
+        elif key == "time_machine.folders":
+            rendered = ", ".join("~/" + folder for folder in value) if value else "None"
         elif key in ("time_machine.downloads", "time_machine.dia", "time_machine.apps", "time_machine.settings", "time_machine.user_files"):
             rendered = "Copy from the latest backup" if value == "copy" else "Do not copy"
         elif value is True:
@@ -210,7 +219,7 @@ def main():
         if step in order and existing != value:
             # downloads is asked after the wizard, so it depends on every step
             # but changing it does not invalidate the completed result.
-            for later in order[order.index(step) + 1:] + ["result", "number", "downloads", "apps", "settings", "user_files", "dia", "dia_extensions"]:
+            for later in order[order.index(step) + 1:] + ["result", "number", "downloads", "folders", "apps", "settings", "user_files", "dia", "dia_extensions"]:
                 data["answers"].pop("time_machine." + later, None)
         data["answers"][key] = value
         if key in ["time_machine.major", "time_machine.result"] and isinstance(value, dict) and value.get("version"):

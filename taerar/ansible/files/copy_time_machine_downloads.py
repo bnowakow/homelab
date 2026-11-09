@@ -640,6 +640,7 @@ SETTINGS_DOMAINS = [
     "com.apple.driver.AppleBluetoothMultitouch.mouse", "com.apple.HIToolbox",
     "com.apple.symbolichotkeys", "com.apple.screencapture", "com.apple.menuextra.clock",
     "com.apple.controlcenter", "com.apple.universalaccess", "com.apple.systempreferences",
+    "com.apple.Music", "com.apple.mail", "com.apple.iCal", "com.apple.Notes",
 ]
 # Volatile or machine-specific keys that are never merged.
 SETTINGS_SKIPPED_KEYS = {"FXRecentFolders", "GoToField", "GoToFieldHistory", "FXConnectToLastURL",
@@ -712,6 +713,10 @@ def copy_system_settings(backup, user, manifest, mode, state_dir=None):
     return {"what": "system-settings", "backup": backup.name, "mode": mode, "domains": applied,
             "planned": [domain for domain, _ in plan]}
 
+
+# Home folders offered by the folders question and copied by --folder NAME.
+HOME_FOLDERS = ["Documents", "Downloads", "Movies", "Music", "Pictures",
+                "Desktop", "code", "Sync", "go", "Public"]
 
 # Folders under the home folder copied by --user-files (new files only).
 USER_FILE_ROOTS = [".ssh", "Library/Fonts", "Library/LaunchAgents", "Library/Services", "Library/Scripts"]
@@ -817,8 +822,13 @@ def main():
     args = sys.argv[1:]
     what = "downloads"
     catalog = None
+    folder_name = None
     if args and args[0] in ("--dia", "--dia-extensions"):
         what, args = args[0][2:], args[1:]
+    elif args and args[0] == "--folder":
+        what, folder_name, args = "folder", args[1], args[2:]
+        if folder_name not in HOME_FOLDERS:
+            raise CopyError(f"Unknown folder {folder_name}; allowed: {', '.join(HOME_FOLDERS)}.")
     elif args and args[0] == "--user-files":
         what, args = "user-files", args[1:]
     elif args and args[0] == "--system-settings":
@@ -865,6 +875,11 @@ def main():
                 files = plan_dia(source, mode)
                 if not files:
                     raise CopyError(f"The latest backup has no Dia configuration for user {user}.")
+            elif what == "folder":
+                source = find_user_home(backup, user) / folder_name
+                if not source.is_dir() or source.is_symlink():
+                    raise CopyError(f"The latest backup has no {folder_name} folder for user {user}.")
+                files = plan_copy(source, mode)
             else:
                 source = find_downloads(backup, user)
                 files = plan_copy(source, mode)
@@ -881,7 +896,7 @@ def main():
                             f"plus 1 GiB headroom, but only {free / 1024 ** 3:.1f} GiB is free.")
         new = sum(1 for relative, _ in files
                   if not ((destination / relative).exists() or (destination / relative).is_symlink()))
-        progress(f"Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
+        progress(f"[{what if what != 'folder' else '~/' + folder_name}] Copying {new} new item(s) ({needed / 1024 ** 2:.1f} MiB) into {destination}; "
                  f"{len(files) - new} already present will be kept...")
         copied, skipped = copy_files(files, source, destination, manifest, work_dir, backup.name)
         extensions = list_dia_extensions(source) if what == "dia" else []
