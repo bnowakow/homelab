@@ -273,3 +273,6 @@
   to this helper; Homebrew then adds `-A` itself.
 - Xcode license (tasks/xcode-license.yml): ask before accepting (default Abort); with
   `--unattended` accept without asking via `sudo -A xcodebuild -license accept`.
+- `mas install` only installs apps the signed-in Apple ID already got; a free app it
+  never downloaded fails with "No downloads initiated", so the installer falls back to
+  `mas get` before reporting a failure.

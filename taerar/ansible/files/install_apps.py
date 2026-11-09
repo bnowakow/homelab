@@ -139,6 +139,11 @@ def install_store_group(group, summary, tty):
         while True:
             print(f"Installing {app['name']} from the App Store", file=sys.stderr, flush=True)
             result = run(["sudo", "-A", "mas", "install", str(app["mas"])], tty)
+            if result.returncode != 0:
+                # install only works for apps this Apple ID already got; a free app
+                # it never downloaded needs `get` ("No downloads initiated").
+                print(f"mas install failed for {app['name']}; trying mas get (free apps)", file=sys.stderr, flush=True)
+                result = run(["sudo", "-A", "mas", "get", str(app["mas"])], tty)
             if result.returncode == 0:
                 signed_in = True
                 summary["installed"].append(app["name"])
