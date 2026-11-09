@@ -448,7 +448,7 @@ def plan_apps(catalog, backup_home, mode):
             or any(item[0].name == name for item in bundles)
         if not here:
             continue
-        if executable and subprocess.run(["pgrep", "-x", executable], stdout=subprocess.DEVNULL).returncode == 0:
+        if executable and subprocess.run(["pgrep", "-x", "-u", str(os.getuid()), executable], stdout=subprocess.DEVNULL).returncode == 0:
             notes.append(f"{app['name']}: running, preferences not copied (quit it and rerun)")
             continue
         for relative in (Path("Library/Preferences") / f"{identifier}.plist",
@@ -719,16 +719,31 @@ HOME_FOLDERS = ["Documents", "Downloads", "Movies", "Music", "Pictures",
                 "Desktop", "code", "Sync", "go", "Public"]
 
 # Folders under the home folder copied by --user-files (new files only).
-USER_FILE_ROOTS = [".ssh", "Library/Fonts", "Library/LaunchAgents", "Library/Services", "Library/Scripts"]
+USER_FILE_ROOTS = [".ssh", "Library/Fonts", "Library/LaunchAgents", "Library/Services", "Library/Scripts",
+                   # Dotfiles and folders that make install-dotfiles does not install
+                   # (.gitconfig, .p10k.zsh, .vimrc, .zpreztorc and .zshrc come from the
+                   # repository). Caches, installed tools and model stores are left out.
+                   ".zshenv", ".zprofile", ".zlogin", ".zlogout", ".zsh_history", ".viminfo",
+                   ".config", ".docker", ".kube", ".cursor", ".vscode", ".codex", ".claude",
+                   ".claude.json", ".gradle", ".m2", ".aws", ".gnupg", ".screenrc", ".npmrc",
+                   ".gitignore_global", ".gitconfig-local"]
+# Copied by --private-data (new files only): data that apps keep open and that
+# needs the apps to be closed.
+PRIVATE_DATA_ROOTS = ["Library/Keychains", "Library/Safari", "Library/Containers/com.apple.Safari",
+                      "Library/Messages", "Library/Mail", "Library/Containers/com.apple.mail",
+                      "Library/Group Containers/group.com.apple.mail"]
 SIDEBAR_DIR = Path("Library/Application Support/com.apple.sharedfilelist")
 SIDEBAR_PREFIX = "com.apple.LSSharedFileList.FavoriteItems.sfl"
 
 
-def plan_user_files(home, mode):
-    """(relative path, source) pairs of ssh, fonts, login items, services and scripts."""
+def plan_user_files(home, mode, roots=None):
+    """(relative path, source) pairs of ssh, fonts, login items, dotfiles and scripts."""
     files = {}
-    for root in USER_FILE_ROOTS:
+    for root in (USER_FILE_ROOTS if roots is None else roots):
         base = home / root
+        if base.is_file() and not base.is_symlink():
+            files[base.relative_to(home)] = base
+            continue
         if not base.is_dir() or base.is_symlink():
             continue
         for folder, directories, names in os.walk(base):
@@ -804,6 +819,9 @@ def copy_user_files(backup, user, manifest, mode):
     ssh = destination / ".ssh"
     if ssh.is_dir() and (ssh.stat().st_mode & 0o077):
         ssh.chmod(0o700)   # a folder we created gets default permissions; ssh wants it private
+    gnupg = destination / ".gnupg"
+    if gnupg.is_dir() and (gnupg.stat().st_mode & 0o077):
+        gnupg.chmod(0o700)
     sidebar = []
     if mode == "PROD":
         sidebar = replace_sidebar(home, destination, manifest, manifest.parent)
@@ -812,6 +830,26 @@ def copy_user_files(backup, user, manifest, mode):
                 subprocess.run(["killall", process], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return {"what": "user-files", "backup": backup.name, "mode": mode, "copied": copied,
             "skipped_existing": skipped, "sidebar": sidebar}
+
+
+def copy_private_data(backup, user, manifest, mode):
+    """Copy keychains, Safari, Messages and Mail data (new files only)."""
+    home = find_user_home(backup, user)
+    try:
+        files = plan_user_files(home, mode, PRIVATE_DATA_ROOTS)
+    except PermissionError as error:
+        raise CopyError(FULL_DISK_ACCESS) from error
+    destination = Path.home()
+    base = manifest.parent / (manifest.stem + "-work")
+    copied, skipped = 0, 0
+    if files:
+        needed = sum(path.lstat().st_size for _, path in files)
+        if needed + FREE_SPACE_MARGIN > shutil.disk_usage(destination).free:
+            raise CopyError(f"Not enough free space for the private data ({needed / 1024 ** 2:.0f} MiB).")
+        progress(f"Copying {len(files)} private data file(s) ({needed / 1024 ** 2:.0f} MiB) into {destination}...")
+        copied, skipped = copy_files(files, home, destination, manifest, base, backup.name)
+    return {"what": "private-data", "backup": backup.name, "mode": mode, "copied": copied,
+            "skipped_existing": skipped}
 
 
 def main():
@@ -831,6 +869,8 @@ def main():
             raise CopyError(f"Unknown folder {folder_name}; allowed: {', '.join(HOME_FOLDERS)}.")
     elif args and args[0] == "--user-files":
         what, args = "user-files", args[1:]
+    elif args and args[0] == "--private-data":
+        what, args = "private-data", args[1:]
     elif args and args[0] == "--system-settings":
         what, args = "system-settings", args[1:]
     elif args and args[0] == "--apps":
@@ -856,6 +896,9 @@ def main():
         if what == "dia-extensions":
             print(json.dumps({"what": what, "backup": backup.name,
                               "extensions": list_dia_extensions(find_user_home(backup, user))}))
+            return
+        if what == "private-data":
+            print(json.dumps(copy_private_data(backup, user, manifest, mode)))
             return
         if what == "user-files":
             print(json.dumps(copy_user_files(backup, user, manifest, mode)))

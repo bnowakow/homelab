@@ -249,6 +249,7 @@ PY
     rm -f "$state_dir/time-machine-settings.jsonl"
     rm -rf "$state_dir/system-settings-backup"
   fi
+  undo_copied_files "$state_dir" time-machine-private-data 'the keychain, Safari, Messages and Mail data copied from a backup' || return 1
   undo_copied_files "$state_dir" time-machine-user-files 'the user files copied from a backup' || return 1
   rm -rf -- "$state_dir/user-files-backup"
   undo_copied_files "$state_dir" time-machine-apps 'the apps and preferences copied from a backup' || return 1

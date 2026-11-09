@@ -56,7 +56,7 @@
           Music '~/Music (includes the Music app library)' on \
           Pictures '~/Pictures' on \
           Desktop '~/Desktop' off \
-          code '~/code (projects; existing folders are kept)' off \
+          code '~/code (projects; existing folders are kept)' on \
           Sync '~/Sync (Syncthing folder)' off \
           go '~/go (Go workspace)' off \
           Public '~/Public' off \

@@ -1,23 +1,38 @@
 # Ensure an app is not running before its settings are copied.
-# Variables: quit_process (pgrep -x name), quit_app_name (shown to the user),
+# Only the current user's processes count (another logged-in user may run
+# the same app). Variables: quit_process (pgrep -x name), quit_app_name (shown to the user),
 # quit_attempt (starts at 1). While the app runs, ask the user to quit it and
 # confirm, then check again; Abort (the default) or a missing terminal stops.
+# The first dialog also offers "Quit it for me" (a normal quit request); when
+# the app is still running afterwards, the button becomes "Force quit it"
+# (SIGTERM, then SIGKILL), which can lose unsaved work.
 - name: "Check that {{ quit_app_name }} is not running"
-  ansible.builtin.command: "pgrep -x {{ quit_process }}"
+  ansible.builtin.shell: 'pgrep -x -u "$(id -u)" "$PROCESS"'
+  environment:
+    PROCESS: "{{ quit_process }}"
   register: quit_check
   changed_when: false
   failed_when: false
 
 - name: "Ask to quit {{ quit_app_name }} and confirm"
   ansible.builtin.shell: |
-    dialog --clear --stdout --cr-wrap --title 'Quit $APP_NAME' \
-      --yes-label "I quit it, check again" --no-label Abort --default-button no \
-      --yesno "$APP_NAME is running. It rewrites its settings when it closes, which would overwrite the copied ones.\n\nQuit $APP_NAME (Cmd+Q), then choose 'I quit it, check again'." 12 70 \
+    if [ "$ATTEMPT" -ge 2 ]; then
+      extra="Force quit it"
+      hint="It is still running. Force quit ends it immediately and can lose unsaved work."
+    else
+      extra="Quit it for me"
+      hint="Quit it yourself (Cmd+Q), or let provisioning ask it to quit."
+    fi
+    dialog --clear --stdout --cr-wrap --title "Quit $APP_NAME" \
+      --yes-label "I quit it, check again" --no-label Abort \
+      --extra-button --extra-label "$extra" --default-button no \
+      --yesno "$APP_NAME is running. It keeps its data open and rewrites it when it closes, which would conflict with the copied data.\n\n$hint" 12 78 \
       < "$PROVISION_TTY" 2> "$PROVISION_TTY"
   args:
     executable: /bin/bash
   environment:
     APP_NAME: "{{ quit_app_name }}"
+    ATTEMPT: "{{ quit_attempt }}"
     PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
     TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
     DIALOG_ERROR: '70'
@@ -26,6 +41,27 @@
   failed_when: false
   when: quit_check.rc == 0
 
+- name: "Quit {{ quit_app_name }} at the user's request"
+  ansible.builtin.shell: |
+    if [ "$ATTEMPT" -ge 2 ]; then
+      pkill -x -u "$(id -u)" "$PROCESS" || true
+      for _ in 1 2 3 4 5; do pgrep -x -u "$(id -u)" "$PROCESS" >/dev/null || exit 0; sleep 1; done
+      pkill -KILL -x -u "$(id -u)" "$PROCESS" || true
+      sleep 1
+    else
+      osascript -e 'on run argv' -e 'tell application (item 1 of argv) to quit' -e 'end run' "$APP_NAME" || true
+      for _ in $(seq 1 15); do pgrep -x -u "$(id -u)" "$PROCESS" >/dev/null || exit 0; sleep 1; done
+    fi
+  args:
+    executable: /bin/bash
+  environment:
+    APP_NAME: "{{ quit_app_name }}"
+    PROCESS: "{{ quit_process }}"
+    ATTEMPT: "{{ quit_attempt }}"
+  changed_when: true
+  failed_when: false
+  when: quit_check.rc == 0 and quit_answer.rc == 3
+
 - name: "Stop while {{ quit_app_name }} keeps running"
   ansible.builtin.fail:
     msg: >-
@@ -33,7 +69,7 @@
       when it closes, then rerun provisioning. Your answers are saved.
   when: >-
     quit_check.rc == 0 and
-    (quit_answer.rc != 0 or quit_attempt | int >= 10)
+    (quit_answer.rc not in [0, 3] or quit_attempt | int >= 10)
 
 - name: Count the attempt
   ansible.builtin.set_fact:

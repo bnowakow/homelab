@@ -44,7 +44,7 @@
         if [ "$FILES_ENV" = TEST ]; then
           scope='TEST environment: only one small file (~/.ssh/known_hosts when present) is copied.'
         else
-          scope='Copies ~/.ssh (including private keys), ~/Library/Fonts, LaunchAgents (login items; they are not loaded), Services and Scripts, and replaces the Finder sidebar favorites.'
+          scope='Copies ~/.ssh (including private keys), ~/Library/Fonts, LaunchAgents (login items; they are not loaded), Services and Scripts, dotfiles that make install-dotfiles does not install (.zsh_history, .config, .docker, .kube, .cursor, .codex, .claude, .gradle, .m2, .aws, .gnupg and others), and replaces the Finder sidebar favorites.'
         fi
         message="Copy user files from the latest backup in $SOURCE_NAME into this Mac?\n\n$scope Existing files are never overwritten (except the sidebar, which is saved first), and the backup is only read.\n\nThe terminal running provisioning needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access) to read backup contents."
         dialog --clear --stdout --cr-wrap --title 'Copy user files from backup' \

@@ -351,14 +351,32 @@ plist and no app.
 (including private keys; the folder is set to mode 700 and agent/ControlMaster
 sockets are skipped), `~/Library/Fonts`, `~/Library/LaunchAgents` (copied but not
 loaded, so nothing runs until the next login), `~/Library/Services` and
-`~/Library/Scripts`. Files are copied with the same Homebrew rsync staging, never
+`~/Library/Scripts`, plus the dotfiles and folders that `make install-dotfiles` does
+not install: `.zshenv`, `.zprofile`, `.zlogin`, `.zlogout`, `.zsh_history`, `.viminfo`,
+`.config`, `.docker`, `.kube`, `.cursor`, `.vscode`, `.codex`, `.claude`, `.claude.json`,
+`.gradle`, `.m2`, `.aws`, `.gnupg` (mode 700), `.screenrc`, `.npmrc` and similar (some hold tokens).
+Caches, installed tools and Ollama models are not copied. Files are copied with the same Homebrew rsync staging, never
 overwritten, and removed by undo while unchanged (`time-machine-user-files.jsonl`).
 The Finder sidebar favorites (`com.apple.LSSharedFileList.FavoriteItems.sfl*`) are
 the one exception (also copied with rsync): macOS already has them on a new Mac, so they are replaced after
 saving the original in `user-files-backup`, and undo restores it; the sidebar
 bookmarks may point at folders that do not exist here. `TEST` copies one small file.
-`~/.gitconfig` and `~/.zshrc` are not read from the backup: they are repository
-dotfiles installed by `make install-dotfiles` in the dotfiles step.
+`~/.gitconfig`, `~/.zshrc`, `~/.vimrc`, `~/.p10k.zsh` and `~/.zpreztorc` are not read
+from the backup: they are repository dotfiles installed by `make install-dotfiles`.
+
+`time-machine-private-data-question_playbook.yml` asks (saved as
+`time_machine.private_data`) whether to copy `~/Library/Keychains`, Safari
+(`~/Library/Safari` and its container), Messages (`~/Library/Messages`: chat database
+and attachments) and Mail (`~/Library/Mail` and the Mail containers), and
+`time-machine-private-data_playbook.yml` does it right after the user files. Safari,
+Mail and Messages must be closed (the playbook asks you to quit them and re-checks).
+It uses the same rsync staging and never overwrites: a keychain, database or Mail
+account this Mac already created is kept, so only missing files are added (for
+example the `login.keychain-db` of a fresh account stays, and a Safari that was
+already opened keeps its own `History.db`). Mail account sign-ins live in the system
+accounts database, which is not copied; add the accounts in Mail or Internet Accounts
+and the copied messages are used. Undo removes unchanged copies
+(`time-machine-private-data.jsonl`). `TEST` copies one file.
 
 The settings merge below also covers the `com.apple.Music`, `com.apple.mail`,
 `com.apple.iCal` and `com.apple.Notes` preferences (account setup and the mail or
@@ -556,8 +574,8 @@ choice and does not read, copy or modify any backup.
 After the wizard, when a backup to copy data from was selected (not **Do not
 copy data**), `time-machine-folders-question_playbook.yml` shows a checklist (Space
 toggles) of home folders to copy from the **latest** backup inside that bundle (for
-example `Taerar 7.5.sparsebundle`): Documents, Downloads, Movies, Music and
-Pictures are selected by default; Desktop, `code`, `Sync`, `go` and `Public` are
+example `Taerar 7.5.sparsebundle`): Documents, Downloads, Movies, Music,
+Pictures and `code` are selected by default; Desktop, `Sync`, `go` and `Public` are
 offered unselected. Music includes the Music app library. Abort is the default;
 the selection (a list, empty means skip) is saved as `time_machine.folders` and
 reused. The older `time_machine.downloads` answer is ignored.

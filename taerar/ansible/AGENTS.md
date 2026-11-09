@@ -172,7 +172,7 @@
   keep data copies minimal (e.g. one file) for small test machines.
 - After the wizard, if a copy source was chosen, ask with a dialog checklist
   (saved as the list time_machine.folders; Documents, Downloads, Movies, Music,
-  Pictures preselected, other home folders offered unselected) which home folders
+  Pictures, code preselected, other home folders offered unselected) which home folders
   to copy from the latest backup in that bundle. Attach read-only and always detach; unlock encrypted volumes only
   through an interactive password prompt and never store it. Never overwrite
   existing files; check free space first. Record each created file/folder in
@@ -212,7 +212,10 @@
 - Backup copies besides folders: time-machine-apps (app bundles with from_backup
   plus preference plists of installed catalog apps, skipping running apps),
   time-machine-user-files (.ssh, Fonts, LaunchAgents not loaded, Services,
-  Scripts, Finder sidebar replaced after saving the original) and
+  Scripts, non-repository dotfiles such as .zsh_history/.config/.kube, Finder
+  sidebar replaced after saving the original),
+  time-machine-private-data (Keychains, Safari, Messages, Mail; asks to quit
+  Safari/Mail/Messages first, never overwrites) and
   time-machine-settings (Finder, Dock, system, Music, Mail domains merged with
   `defaults export/import`, originals saved for undo). Use
   tasks/wait-for-app-quit.yml to ask the user to quit an app and re-check

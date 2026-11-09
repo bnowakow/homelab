@@ -11,6 +11,8 @@
 
 - import_playbook: time-machine-user-files-question_playbook.yml
 
+- import_playbook: time-machine-private-data-question_playbook.yml
+
 - import_playbook: time-machine-settings-question_playbook.yml
 
 - import_playbook: time-machine-dia_playbook.yml
@@ -18,6 +20,8 @@
 - import_playbook: time-machine-apps_playbook.yml
 
 - import_playbook: time-machine-user-files_playbook.yml
+
+- import_playbook: time-machine-private-data_playbook.yml
 
 - import_playbook: time-machine-settings_playbook.yml
 
