@@ -258,10 +258,9 @@
   manual input and save it. Minor suggests highest existing minor + 1; major
   suggests highest major + 1 with .0. Minor backup creation remains TODO.
 - Ansible tasks have no controlling terminal, so a plain `sudo` cannot ask for the
-  password there (the sudo ticket from provision.sh is per terminal). Run privileged
-  commands (mas 7 `get`/`install`) with `sudo -A` and
-  a temporary SUDO_ASKPASS from `files/sudo-askpass-wrapper.sh` (sudo cleans the
-  environment before running the helper, so the terminal, TERM and PATH are baked into
-  the wrapper; remove it afterwards) that runs `files/sudo-askpass.sh`, which shows a hidden dialog password prompt
-  on the provisioning terminal and passes the answer only to sudo. Never read,
-  log or store the password.
+  password there (the sudo ticket from provision.sh is per terminal), and sudo runs an
+  askpass helper with a cleaned environment, so a terminal dialog does not work either.
+  Run privileged commands (mas 7 `get`/`install`) with `sudo -A` and
+  `SUDO_ASKPASS=files/sudo-askpass.sh`, which shows the native macOS hidden password
+  dialog (osascript) and passes the answer only to sudo. Never read, log or store the
+  password.
