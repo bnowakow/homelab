@@ -40,7 +40,8 @@ def merge_manifest(path, lines):
 def main():
     catalog, state_dir, env_name, tty = sys.argv[1:5]
     state = Path(state_dir)
-    apps = json.loads(Path(catalog).read_text())["apps"]
+    catalog_data = json.loads(Path(catalog).read_text())
+    apps = catalog_data["apps"]
     home = Path.home()
     brew_env = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE="1", HOMEBREW_NO_INSTALL_CLEANUP="1",
                     HOMEBREW_NO_INSTALL_UPGRADE="1", HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK="1")
@@ -97,17 +98,21 @@ def main():
         # then ask to switch back for the rest.
         os.environ["SUDO_ASKPASS"] = str(Path(__file__).with_name("sudo-askpass.sh"))
         run(["sudo", "-A", "-v"], tty)
-        second = [a for a in store if a.get("account") == "second"]
-        main_group = [a for a in store if a.get("account") != "second"]
-        if second:
-            if confirm_account_switch(tty, [a["name"] for a in second], second=True):
-                install_store_group(second, summary, tty)
-            else:
-                summary["failed"] += [a["name"] + " (other App Store account not used)" for a in second]
-            if main_group and not confirm_account_switch(tty, [a["name"] for a in main_group], second=False):
-                summary["failed"] += [a["name"] + " (App Store account not switched back)" for a in main_group]
-                main_group = []
-        install_store_group(main_group, summary, tty)
+        # Groups follow "app_store_accounts" (the last one is the account that
+        # is normally signed in). Every account after the first install, and
+        # the first one too unless it is the normal account, needs a confirmed
+        # switch; skipping a switch skips that account's apps.
+        order = catalog_data.get("app_store_accounts", [])
+        accounts = order + sorted({a.get("account", "") for a in store} - set(order))
+        normal = order[-1] if order else ""
+        groups = [(account, [a for a in store if a.get("account", normal) == account]) for account in accounts]
+        groups = [(account, group) for account, group in groups if group]
+        for number, (account, group) in enumerate(groups):
+            if number > 0 or account != normal:
+                if not confirm_account_switch(tty, account, [a["name"] for a in group]):
+                    summary["failed"] += [a["name"] + f" (App Store account {account} not used)" for a in group]
+                    continue
+            install_store_group(group, summary, tty)
     print(json.dumps(summary))
     return 0
 
@@ -139,25 +144,19 @@ def install_store_group(group, summary, tty):
                 break
 
 
-def confirm_account_switch(tty, names, second):
-    """Ask the user to switch the App Store to another Apple ID and confirm.
+def confirm_account_switch(tty, account, names):
+    """Ask the user to switch the App Store to this Apple ID and confirm.
     The dialog appears with --unattended too; Skip is the default."""
     run(["open", "-a", "App Store"], tty)
-    listed = ", ".join(names)
-    if second:
-        text = ("These apps were bought with another Apple ID:\n\n" + listed +
-                "\n\nIn the App Store app that just opened, sign out (Store > Sign Out) and sign in "
-                "with that Apple ID, then choose 'I switched'. The other App Store apps follow after "
-                "you switch back.")
-    else:
-        text = ("Switch the App Store back to your main Apple ID (Store > Sign Out, then Sign In) "
-                "to install:\n\n" + listed + "\n\nThen choose 'I switched'.")
+    text = (f"Switch the App Store to the Apple ID {account} to install:\n\n" + ", ".join(names) +
+            "\n\nIn the App Store app that just opened, sign out (Store > Sign Out) and sign in with "
+            f"{account}, then choose 'I switched'.")
     if shutil_which("dialog"):
         result = run(["dialog", "--clear", "--cr-wrap", "--title", "Switch App Store account",
                       "--default-button", "cancel", "--yes-label", "I switched", "--no-label", "Skip these apps",
                       "--yesno", text, "16", "76"], tty)
         return result.returncode == 0
-    print(text.replace("\\n", "\n"), file=sys.stderr)
+    print(text, file=sys.stderr)
     return False
 
 
