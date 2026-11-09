@@ -44,7 +44,7 @@
         if [ "$APPS_ENV" = TEST ]; then
           scope='TEST environment: only one preference file is copied and no app is copied.'
         else
-          scope='Copies ForkLift, Camtasia 2, OpenEmu and Transmission Remote GUI from the backup (only if missing here) and the preferences plist of every catalog app installed on this Mac.'
+          scope='Copies ForkLift, Camtasia 2, OpenEmu, Transmission Remote GUI, Better Dock, CoreNodeReader, megacleaner, Tailscale-package and Vorssaint from the backup (only if missing here) and the preferences plist of every catalog app installed on this Mac.'
         fi
         message="Copy apps and their preferences from the latest backup in $SOURCE_NAME?\n\n$scope Existing files are never overwritten, apps that are running are skipped, and the backup is only read.\n\nThe terminal running provisioning needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access) to read backup contents."
         dialog --clear --stdout --cr-wrap --title 'Copy apps from backup' \

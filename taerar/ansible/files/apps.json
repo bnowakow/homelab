@@ -65,10 +65,10 @@
     {"name": "Gemini 2", "app": "Gemini 2", "cask": "gemini"},
     {"name": "balenaEtcher", "app": "balenaEtcher", "cask": "balenaetcher"},
     {"name": "Bambu Studio", "app": "BambuStudio", "cask": "bambu-studio"},
-    {"name": "Amphetamine", "app": "Amphetamine", "mas": 937984704},
+    {"name": "Amphetamine", "test": true, "app": "Amphetamine", "mas": 937984704},
     {"name": "TG Pro", "app": "TG Pro", "cask": "tg-pro"},
     {"name": "Burn", "app": "Burn", "cask": "burn"},
-    {"name": "MacPacker", "app": "MacPacker", "cask": "macpacker"},
+    {"name": "MacPacker", "test": true, "app": "MacPacker", "cask": "macpacker"},
     {"name": "NameChanger", "app": "NameChanger", "cask": "namechanger"},
     {"name": "Kid3", "app": "kid3", "cask": "kid3"},
     {"name": "Transmission", "app": "Transmission", "cask": "transmission"},
@@ -80,6 +80,15 @@
     {"name": "Reolink Client", "app": "Reolink", "cask": "reolink"},
     {"name": "Owlfiles", "app": "Owlfiles", "mas": 510282524},
     {"name": "Eyemesh", "app": "Eyemesh", "mas": 6759490053},
+    {"name": "Arctic", "app": "Arctic", "cask": "arctic"},
+    {"name": "BRAW Toolbox", "app": "BRAW Toolbox", "mas": 6444061549},
+    {"name": "ShurePlus MOTIV", "app": "ShurePlus MOTIV", "cask": "shureplus-motiv"},
+    {"name": "Autodesk Fusion", "app": "Autodesk Fusion", "cask": "autodesk-fusion"},
+    {"name": "Better Dock", "from_backup": true, "app": "Better Dock", "manual": "no Homebrew cask or App Store app; copied from the backup"},
+    {"name": "CoreNodeReader", "from_backup": true, "app": "CoreNodeReader", "manual": "no Homebrew cask or App Store app; copied from the backup"},
+    {"name": "megacleaner", "from_backup": true, "app": "megacleaner", "manual": "no Homebrew cask or App Store app; copied from the backup"},
+    {"name": "Tailscale-package", "from_backup": true, "app": "Tailscale-package", "manual": "older standalone package build; copied from the backup"},
+    {"name": "Vorssaint", "from_backup": true, "app": "Vorssaint", "manual": "no Homebrew cask or App Store app; copied from the backup"},
     {"name": "PRO Speed Test", "app": "PRO Speed Test", "manual": "no Homebrew cask or App Store listing found; download from the vendor"}
   ]
 }

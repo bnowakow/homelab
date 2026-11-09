@@ -7,7 +7,7 @@
     env_name: "{{ provision_env | default('PROD') }}"
   tasks:
     # files/apps.json lists Homebrew casks, App Store apps (via mas) and apps
-    # that must be installed by hand. In TEST nothing is installed.
+    # that must be installed by hand. TEST installs only the apps marked "test".
     - name: Install missing applications and record rollback manifests
       ansible.builtin.command:
         argv:
@@ -31,8 +31,7 @@
       ansible.builtin.debug:
         msg: >-
           {{ env_name }}: {{ apps_summary.present }} catalog app(s) already installed;
-          {{ 'would install' if env_name == 'TEST' else 'installed' }}
-          {{ (apps_summary.casks + apps_summary.store) if env_name == 'TEST' else apps_summary.installed }};
+          installed {{ apps_summary.installed }}{{ ', plan (not installed in TEST): ' ~ (apps_summary.casks + apps_summary.store) if env_name == 'TEST' else '' }};
           failed: {{ apps_summary.failed }};
           copied from the Time Machine backup if you accept: {{ apps_summary.from_backup }};
           install by hand: {{ apps_summary.manual | map(attribute='name') | list }}

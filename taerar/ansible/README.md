@@ -326,14 +326,17 @@ license covers only version 2.x, and DxO PhotoLab 9). Apps already present in
 the rest, and casks plus their missing dependencies are recorded in
 `apps-casks` / `apps-formulae` first so `undo-provision.sh` removes them. App
 Store apps are recorded in `apps-mas` but left installed. In the `TEST`
-environment nothing is installed and the plan is only printed.
+environment only one representative cask (MacPacker) and one App Store app
+(Amphetamine), marked `"test"` in the catalog, are installed and the rest of the
+plan is only printed.
 
 `time-machine-apps-question_playbook.yml` asks (saved as `time_machine.apps`,
 with the other backup questions up front) whether to copy apps and preferences
 from the selected backup, and `time-machine-apps_playbook.yml` does it after the
 Dia step and before the final ~/Downloads copy. It copies the `from_backup` apps
 of `files/apps.json` that this Mac lacks (ForkLift, Camtasia 2, OpenEmu,
-Transmission Remote GUI) into `/Applications` (or `~/Applications` where they
+Transmission Remote GUI, Better Dock, CoreNodeReader, megacleaner, Tailscale-package,
+Vorssaint) into `/Applications` (or `~/Applications` where they
 lived), and the preferences plist (`~/Library/Preferences/<bundle id>.plist`, or
 the sandbox container's copy) of every catalog app installed here. Never
 overwrites; apps that are running (for example the terminal) are skipped with a
@@ -345,7 +348,7 @@ plist and no app.
 `dev-tools_playbook.yml`, which runs right after `make-dependencies_playbook.yml`
 (below), installs with Homebrew, when missing: SDKMAN (`sdkman/tap/sdkman-cli`),
 screen, wget, curl, ffmpeg, ggshield, mole, mtr, node, ollama, pipx, pyenv,
-pyenv-virtualenv, the current `python`, readline, ruby, sshpass, tree and the
+pyenv-virtualenv, the current `python`, readline, ruby, sshpass, tree, yt-dlp, ansible, dialog and the
 casks rar and znotch (`zkondor/dist/znotch`). Homebrew 7 refuses untrusted taps,
 so only the SDKMAN formula and the znotch cask are trusted, with
 `brew trust`. Taps, trusted items, formulae and casks are recorded in

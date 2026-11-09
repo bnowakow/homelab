@@ -7,7 +7,8 @@ Apps already present in /Applications or ~/Applications (or installed as a cask
 or App Store app) are skipped. Casks and their missing dependencies are recorded
 in STATE_DIR before installing so undo-provision.sh can remove them; App Store
 installs are recorded in apps-mas for information (they are not uninstalled).
-In the TEST environment nothing is installed; the plan is only reported.
+In the TEST environment only one representative cask and one App Store app
+(marked "test" in the catalog) are installed; the rest is only reported.
 One failed install never stops the others. The last stdout line is a JSON summary.
 """
 import json
@@ -72,8 +73,11 @@ def main():
                "store": [a["name"] for a in store], "manual": [{"name": a["name"], "why": a["manual"]} for a in manual],
                "from_backup": from_backup, "installed": [], "failed": [], "installed_mode": env_name}
     if env_name == "TEST":
-        print(json.dumps(summary))
-        return 0
+        # The summary above keeps the full plan; TEST installs only one
+        # representative cask and one App Store app (marked "test" in the
+        # catalog), and only if they are not installed yet.
+        casks = [a for a in casks if a.get("test")][:1]
+        store = [a for a in store if a.get("test")][:1]
 
     if casks:
         names = [a["cask"] for a in casks]

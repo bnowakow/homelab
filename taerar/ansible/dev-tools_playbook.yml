@@ -36,6 +36,9 @@
           'ruby|ruby||formula'
           'sshpass|sshpass||formula'
           'tree|tree||formula'
+          'yt-dlp|yt-dlp||formula'
+          'ansible|ansible||formula'
+          'dialog|dialog||formula'
           'rar|rar||cask'
           'znotch|zkondor/dist/znotch|zkondor/dist|cask'
         )
