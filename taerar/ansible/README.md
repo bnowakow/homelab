@@ -41,8 +41,9 @@ confirmations such as `Do you want to proceed with the installation? [y/n]`.
 Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
 existing sudo authorization for unattended installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
-On a Mac without the Command Line Tools the script installs them first with
-`sudo softwareupdate`, so expect one sudo password prompt right at the start. The
+The script asks for your sudo password itself, once, right at the start (it installs the
+Command Line Tools with `sudo softwareupdate` when missing, and the Homebrew installer
+needs authorized sudo), and keeps that authorization alive while it runs. The
 `?$(date +%s)` after `provision.sh` makes GitHub return the current script instead of a
 cached copy.
 

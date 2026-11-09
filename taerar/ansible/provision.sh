@@ -37,6 +37,21 @@ fi
 # Command Line Tools installer and exits. Request the tools and wait for them
 # before cloning. This is Apple's own installer (a dialog to click Install in);
 # undo never removes the tools.
+# Ask for the sudo password once (sudo prompts for it itself; it is never
+# auto-answered, also with --unattended) and keep the authorization alive in
+# the background while provisioning runs. Homebrew's non-interactive installer
+# and later steps (mas) need an already authorized sudo.
+sudo_keepalive_pid=""
+authorize_sudo() {
+  sudo -v || return 1
+  if [[ -z "$sudo_keepalive_pid" ]]; then
+    local parent=$$
+    ( while kill -0 "$parent" 2>/dev/null; do sudo -n true 2>/dev/null || exit 0; sleep 30; done ) &
+    sudo_keepalive_pid=$!
+    trap 'kill "$sudo_keepalive_pid" 2>/dev/null || true' EXIT
+  fi
+}
+
 command_line_tools_ready() {
   local developer_dir
   developer_dir=$(xcode-select -p 2>/dev/null) && [[ -x "$developer_dir/usr/bin/git" ]]
@@ -49,7 +64,7 @@ command_line_tools_ready() {
 install_command_line_tools_with_sudo() {
   local marker=/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress label
   echo 'Installing the Command Line Tools with softwareupdate; macOS asks for your password (sudo).'
-  sudo -v || return 1
+  authorize_sudo || return 1
   # This marker makes softwareupdate list the Command Line Tools.
   touch "$marker"
   label=$(softwareupdate -l 2>/dev/null \
@@ -134,7 +149,8 @@ find_brew() {
 if brew_bin=$(find_brew); then
   echo "Homebrew is already installed: $brew_bin"
 else
-  echo 'Installing Homebrew...'
+  echo 'Installing Homebrew; macOS asks for your password (sudo) if it is not authorized yet.'
+  authorize_sudo || { echo 'Homebrew needs sudo access (an administrator account). Run the command again.' >&2; exit 1; }
   installer=$(/usr/bin/curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)
   touch "$state_dir/homebrew-installed"
   /bin/bash -c "$installer"
