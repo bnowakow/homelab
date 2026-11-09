@@ -4,7 +4,7 @@ dependsOn:
 - name: whisparr-storage
 helm:
   chart: oci://oci.trueforge.org/truecharts/whisparr
-  version: 16.1.2
+  version: 16.1.4
   releaseName: whisparr
   waitForJobs: true
   valuesFiles:

@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/prowlarr
-  version: 23.2.2
+  version: 23.2.4
   releaseName: prowlarr
   waitForJobs: true
   valuesFiles:

@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/sonarr
-  version: 28.1.2
+  version: 28.1.4
   releaseName: sonarr
   waitForJobs: true
   valuesFiles:
