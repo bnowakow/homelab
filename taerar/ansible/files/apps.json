@@ -47,7 +47,7 @@
     {"name": "Blackmagic Camera Setup", "app": "Blackmagic Camera Setup", "manual": "no Homebrew cask; download from https://www.blackmagicdesign.com/support"},
     {"name": "Blackmagic Disk Speed Test", "app": "Blackmagic Disk Speed Test", "mas": 425264550, "account": "dobrowolski.nowakowski@gmail.com"},
     {"name": "Blackmagic RAW Player", "app": "Blackmagic RAW Player", "manual": "ships with Blackmagic RAW; download from https://www.blackmagicdesign.com/support"},
-    {"name": "Blackmagic RAW Speed Test", "app": "Blackmagic RAW Speed Test", "mas": 1466185689, "account": "sup3r0@gmail.com"},
+    {"name": "Blackmagic RAW Speed Test", "app": "Blackmagic RAW Speed Test", "mas": 1466185689, "account": "dobrowolski.nowakowski@gmail.com"},
     {"name": "OM Capture", "app": "OM Capture", "manual": "no Homebrew cask; download from the OM Digital Solutions support site"},
     {"name": "Keynote", "app": "Keynote", "mas": 361285480, "account": "dobrowolski.nowakowski@gmail.com"},
     {"name": "Numbers", "app": "Numbers", "mas": 361304891, "account": "dobrowolski.nowakowski@gmail.com"},
