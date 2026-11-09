@@ -94,7 +94,8 @@ def main():
         # mas 7 has no way to report the App Store sign-in and needs root to
         # install, so the first install is the check: when it fails, open the
         # App Store, let the user sign in and retry, or skip the store apps.
-        run(["sudo", "-v"], tty)
+        os.environ["SUDO_ASKPASS"] = str(Path(__file__).with_name("sudo-askpass.sh"))
+        run(["sudo", "-A", "-v"], tty)
         signed_in = False
         skipped = False
         for app in store:
@@ -103,7 +104,7 @@ def main():
                 continue
             while True:
                 print(f"Installing {app['name']} from the App Store", file=sys.stderr, flush=True)
-                result = run(["sudo", "mas", "install", str(app["mas"])], tty)
+                result = run(["sudo", "-A", "mas", "install", str(app["mas"])], tty)
                 if result.returncode == 0:
                     signed_in = True
                     summary["installed"].append(app["name"])

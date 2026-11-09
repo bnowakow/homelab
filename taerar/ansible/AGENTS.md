@@ -257,3 +257,9 @@
 - Both minor and major paths must ask for a concrete version via suggestion or
   manual input and save it. Minor suggests highest existing minor + 1; major
   suggests highest major + 1 with .0. Minor backup creation remains TODO.
+- Ansible tasks have no controlling terminal, so a plain `sudo` cannot ask for the
+  password there (the sudo ticket from provision.sh is per terminal). Run privileged
+  commands (mas 7 `get`/`install`) with `sudo -A` and
+  `SUDO_ASKPASS=files/sudo-askpass.sh`, which shows a hidden dialog password prompt
+  on the provisioning terminal and passes the answer only to sudo. Never read,
+  log or store the password.
