@@ -1,6 +1,6 @@
 #!/bin/bash
 # Bootstrap from master (copy and run in Terminal):
-# /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh)" -- --unattended
+# /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --unattended
 set -euo pipefail
 
 unattended=false

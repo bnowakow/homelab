@@ -33,7 +33,7 @@ On a new Mac, run as your normal user, without `sudo`. This downloads and execut
 the script from the `master` branch:
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh)" -- --unattended
+/bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --unattended
 ```
 
 The examples use `--unattended` to automatically proceed past installation
@@ -41,6 +41,10 @@ confirmations such as `Do you want to proceed with the installation? [y/n]`.
 Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
 existing sudo authorization for unattended installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
+On a Mac without the Command Line Tools the script installs them first with
+`sudo softwareupdate`, so expect one sudo password prompt right at the start. The
+`?$(date +%s)` after `provision.sh` makes GitHub return the current script instead of a
+cached copy.
 
 To find the command: open [bnowakowski.pl](http://bnowakowski.pl), follow the
 GitHub link, open the `homelab` repository, and browse to

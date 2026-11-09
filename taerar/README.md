@@ -3,7 +3,7 @@
 On a new Mac, run this command in Terminal as your normal user, without `sudo`:
 
 ```sh
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh)" -- --unattended
+/bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --unattended
 ```
 
 The examples use `--unattended` to automatically proceed past installation
@@ -11,6 +11,10 @@ confirmations such as `Do you want to proceed with the installation? [y/n]`.
 Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
 existing sudo authorization for unattended installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
+On a Mac without the Command Line Tools the script installs them first with
+`sudo softwareupdate`, so expect one sudo password prompt right at the start. The
+`?$(date +%s)` after `provision.sh` makes GitHub return the current script instead of a
+cached copy.
 The 1Password checks skip dialogs for verified completed setup or explicitly
 reused saved confirmations. Unsaved incomplete or unverified setup still prompts,
 even with `--unattended`. Live agent and GitHub SSH checks still run before
