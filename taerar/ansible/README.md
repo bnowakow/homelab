@@ -50,8 +50,11 @@ The script creates `~/code` if needed and clones
 `https://github.com/bnowakow/homelab.git` into `~/code/homelab` if that path is
 missing. Existing checkouts are reused. After GitHub login, an Ansible playbook changes
 `origin` to `git@github.com:bnowakow/homelab.git`. Git must be available to clone; on a fresh
-Mac, complete any macOS Command Line Tools installation prompt and rerun the
-script if needed.
+Mac the script first checks for the Command Line Tools and installs them from the
+terminal with `sudo softwareupdate` (sudo asks for your password, also with
+`--unattended`; it is never auto-answered). If that fails it falls back to Apple's
+installer dialog (`xcode-select --install`, click Install) and waits until git works,
+then continues by itself. Undo never removes the tools.
 
 From an existing checkout, you can also run from the repository root:
 

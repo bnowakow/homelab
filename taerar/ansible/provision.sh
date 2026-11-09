@@ -33,6 +33,69 @@ if [[ $EUID -eq 0 ]]; then
   exit 1
 fi
 
+# A fresh macOS has no git: /usr/bin/git is a stub that only opens Apple's
+# Command Line Tools installer and exits. Request the tools and wait for them
+# before cloning. This is Apple's own installer (a dialog to click Install in);
+# undo never removes the tools.
+command_line_tools_ready() {
+  local developer_dir
+  developer_dir=$(xcode-select -p 2>/dev/null) && [[ -x "$developer_dir/usr/bin/git" ]]
+}
+
+# Install the tools from the terminal with Apple's own softwareupdate, which
+# needs sudo: sudo asks for your password itself (never auto-answered, also
+# with --unattended). Returns non-zero when anything fails, so the caller falls
+# back to the installer dialog.
+install_command_line_tools_with_sudo() {
+  local marker=/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress label
+  echo 'Installing the Command Line Tools with softwareupdate; macOS asks for your password (sudo).'
+  sudo -v || return 1
+  # This marker makes softwareupdate list the Command Line Tools.
+  touch "$marker"
+  label=$(softwareupdate -l 2>/dev/null \
+    | sed -n -E 's/^[[:space:]]*\*[[:space:]]+(Label:[[:space:]]+)?(Command Line Tools.*)$/\2/p' \
+    | sort -V | tail -n 1)
+  if [[ -z "$label" ]]; then
+    rm -f "$marker"
+    return 1
+  fi
+  echo "Installing: $label (this can take several minutes)"
+  if ! sudo softwareupdate -i "$label"; then
+    rm -f "$marker"
+    return 1
+  fi
+  rm -f "$marker"
+  sudo xcode-select --switch /Library/Developer/CommandLineTools >/dev/null 2>&1 || true
+  command_line_tools_ready
+}
+
+if ! command_line_tools_ready; then
+  echo 'macOS Command Line Tools (git) are missing.'
+  if install_command_line_tools_with_sudo; then
+    echo 'Command Line Tools are installed.'
+  else
+    echo 'Could not install them from the terminal; falling back to the installer dialog.'
+  fi
+fi
+
+if ! command_line_tools_ready; then
+  echo 'Requesting the installation...'
+  xcode-select --install >/dev/null 2>&1 || true
+  echo 'Click "Install" in the dialog that appeared and accept the license; this can take'
+  echo 'several minutes. Provisioning continues by itself when the installation finishes.'
+  waited=0
+  until command_line_tools_ready; do
+    sleep 5
+    waited=$((waited + 5))
+    if (( waited % 120 == 0 )); then
+      echo "Still waiting for the Command Line Tools installation (${waited}s)..."
+      # Reopen the dialog if it was dismissed.
+      xcode-select --install >/dev/null 2>&1 || true
+    fi
+  done
+  echo 'Command Line Tools are installed.'
+fi
+
 # Keep test rollback state outside the checkout, which undo may remove.
 state_dir="$HOME/.homelab-provision-state"
 umask 077
