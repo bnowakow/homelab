@@ -1,0 +1,95 @@
+# Bring back the Music library after the Music folder was copied from the backup.
+# If the Music app ran before the copy (or could not open the copied library) it creates a
+# fresh, nearly empty "Music Library.musiclibrary" while the music files sit unused in
+# ~/Music/iTunes/iTunes Media. This step compares the current library database with the
+# newest one in "Previous Libraries.localized"; when the current one is much smaller it quits
+# Music, keeps the empty library next to the old ones, puts the newest previous library in
+# place and reopens Music. Asked first (Restore is the default); --automatically-approve
+# restores without asking.
+- name: Restore the Music library when the Music app is showing an empty one
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    music_dir: "{{ lookup('env', 'HOME') }}/Music/Music"
+  pre_tasks:
+    - name: Skip unless the Music folder was copied in this run
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_saved_cancelled | default(false)) or
+        'Music' not in (time_machine_copy_folders | default([]))
+  tasks:
+    - name: Compare the current library with the newest previous one
+      ansible.builtin.shell: |
+        set -u
+        cur="$MUSIC_DIR/Music Library.musiclibrary"
+        prev=$(ls -1d "$MUSIC_DIR/Previous Libraries.localized/Music Library "*.musiclibrary 2>/dev/null | sort | tail -n 1)
+        size() { stat -f %z "$1/Library.musicdb" 2>/dev/null || echo 0; }
+        [ -n "$prev" ] || { echo "none"; exit 0; }
+        cs=$(size "$cur"); ps=$(size "$prev")
+        # A library with music is hundreds of KB; an empty one is a few dozen.
+        if [ "$ps" -gt $((cs * 3)) ] && [ "$ps" -gt 500000 ]; then
+          echo "restore|$prev|$cs|$ps"
+        else
+          echo "ok|$prev|$cs|$ps"
+        fi
+      args:
+        executable: /bin/bash
+      environment:
+        MUSIC_DIR: "{{ music_dir }}"
+      register: music_check
+      changed_when: false
+
+    - name: Say that the library looks fine
+      ansible.builtin.debug:
+        msg: "Music library looks populated (or there is no previous library to restore); leaving it alone."
+      when: not music_check.stdout.startswith('restore')
+
+    - name: Ask before restoring the library
+      ansible.builtin.shell: |
+        dialog --clear --stdout --cr-wrap --title 'Music library' \
+          --yes-label Restore --no-label Skip \
+          --yesno "The Music library is nearly empty ($CUR_KB KB), but an older one has your music ($PREV_KB KB):\n\n$PREV_NAME\n\nQuit Music, keep the empty library beside the old ones, restore the older one and reopen Music?" 15 78 \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        CUR_KB: "{{ (music_check.stdout.split('|')[2] | int / 1024) | int }}"
+        PREV_KB: "{{ (music_check.stdout.split('|')[3] | int / 1024) | int }}"
+        PREV_NAME: "{{ music_check.stdout.split('|')[1] | basename }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_ESC: '255'
+      register: music_answer
+      changed_when: false
+      failed_when: false
+      when: music_check.stdout.startswith('restore') and not (provision_auto_approve | default(false) | bool)
+
+    - name: Restore the previous library
+      ansible.builtin.shell: |
+        set -e
+        cur="$MUSIC_DIR/Music Library.musiclibrary"
+        prev="$PREV"
+        osascript -e 'tell application "Music" to quit' 2>/dev/null || true
+        for _ in $(seq 1 20); do pgrep -x Music >/dev/null || break; sleep 1; done
+        pgrep -x Music >/dev/null && { echo "Music did not quit; close it and rerun." >&2; exit 1; }
+        stamp=$(date '+%Y-%m-%d %H.%M.%S')
+        mv "$cur" "$MUSIC_DIR/Previous Libraries.localized/Music Library [empty $stamp].musiclibrary"
+        ditto "$prev" "$cur"
+        open -a Music
+      args:
+        executable: /bin/bash
+      environment:
+        MUSIC_DIR: "{{ music_dir }}"
+        PREV: "{{ music_check.stdout.split('|')[1] }}"
+      register: music_restore
+      when: >-
+        music_check.stdout.startswith('restore') and
+        (provision_auto_approve | default(false) | bool or (music_answer.rc | default(1)) == 0)
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "Restored the Music library from {{ music_check.stdout.split('|')[1] | basename }}; the empty one is kept in Previous Libraries."
+      when: music_restore is not skipped and music_restore is defined

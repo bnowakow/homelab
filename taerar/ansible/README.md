@@ -393,6 +393,14 @@ before Dropbox has synced. `provision.sh` therefore runs `files/refresh_dock_clo
 tiles to Stack, then restarts the Dock once when the folder exists by then. If it does not exist yet (Dropbox not signed in or still
 syncing), it prints a note; run `killall Dock` once the folder appears.
 
+**Computer name and hostname.** `computer-name_playbook.yml` (right after the Time Machine wizard in `time-machine-setup_playbook.yml`) names this Mac
+from the wizard's `time_machine_computer` and `time_machine_version`: with `Taerar` and `8.0` the computer name is `Taerar 8.0` and the
+local hostname and hostname are `taerar-8-0` (lowercase, only letters, digits and hyphens, since hostnames allow nothing else). It asks first
+(Skip is the default; `--automatically-approve` sets the names without asking), skips when the names already match, and does nothing
+without a completed `create` choice with a version. It runs `sudo -A scutil --set` for the three names (administrator password through the askpass
+dialog) and flushes the DNS cache. The names from before the first change are kept in `~/.homelab-provision-state/computer-name-previous.json`
+and `undo-provision.sh` restores them (a name that was not set before is cleared).
+
 **TODO (G HUB):** wait for a G HUB build that runs on this macOS, then check
 `brew upgrade --cask logitech-g-hub` and rerun provisioning; report the crash to Logitech with
 the `.ips` reports and the macOS version; after a working build, decide whether to copy G HUB
@@ -404,7 +412,7 @@ The combined checklist in `time-machine-copy-question_playbook.yml` asks whether
 from the selected backup, and `time-machine-apps_playbook.yml` does it after the
 Dia step and before the final home folders copy. It copies the `from_backup` apps
 of `files/apps.json` that this Mac lacks (ForkLift, Camtasia 2, OpenEmu,
-Transmission Remote GUI, Better Dock, CoreNodeReader, megacleaner, Tailscale-package,
+Transmission Remote GUI, CoreNodeReader, megacleaner, Tailscale-package,
 Vorssaint, and the vendor-download apps FileZilla, DxO PhotoLab 9, ON1 Photo RAW 2026, Luminar Neo,
 Blackmagic Camera Setup, OM Capture, Pazu StreamGet and PRO Speed Test; an app the backup lacks is
 reported as "not found in the backup" and has to be downloaded by hand). Blackmagic RAW Player is a vendor download (the Blackmagic RAW installer puts it in

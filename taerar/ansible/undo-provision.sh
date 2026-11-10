@@ -262,6 +262,17 @@ PY
     rm -f "$state_dir/time-machine-settings.jsonl"
     rm -rf "$state_dir/system-settings-backup"
   fi
+  # The computer name and hostnames set from the Time Machine choice: restore the originals.
+  if [[ -f "$state_dir/computer-name-previous.json" ]]; then
+    python3 - "$state_dir/computer-name-previous.json" <<'PY' || return 1
+import json, subprocess, sys
+for name, value in json.load(open(sys.argv[1])).items():
+    # An empty value clears the name again (HostName was not set before).
+    subprocess.run(["sudo", "/usr/sbin/scutil", "--set", name, value], check=True)
+print("Restored the computer name and hostnames.")
+PY
+    rm -f "$state_dir/computer-name-previous.json"
+  fi
   undo_copied_files "$state_dir" time-machine-private-data 'the keychain, Safari, Messages and Mail data copied from a backup' || return 1
   undo_copied_files "$state_dir" time-machine-user-files 'the user files copied from a backup' || return 1
   rm -rf -- "$state_dir/user-files-backup"

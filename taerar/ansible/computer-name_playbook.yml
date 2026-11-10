@@ -1,0 +1,108 @@
+# Name this Mac after the computer and version chosen in the Time Machine wizard, e.g.
+# computer "Taerar" + version "8.0": ComputerName "Taerar 8.0", LocalHostName and HostName
+# "taerar-8-0" (lowercase; hostnames allow only letters, digits and hyphens). Asked first
+# (Skip is the default); --automatically-approve sets it without asking. The names from before
+# the first change are kept in ~/.homelab-provision-state/computer-name-previous.json so
+# undo-provision.sh can restore them. Runs as `sudo -A scutil --set` through the askpass dialog.
+- name: Set the computer name and hostname from the Time Machine wizard choice
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    computer_state_file: "{{ lookup('env', 'HOME') }}/.homelab-provision-state/computer-name-previous.json"
+  pre_tasks:
+    # Needs a completed wizard: a new version of an existing computer.
+    - name: Skip unless a computer and version were chosen
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_action | default('cancelled')) != 'create' or
+        (time_machine_computer | default(none)) in [none, ''] or
+        (time_machine_version | default(none)) in [none, ''] or
+        (time_machine_saved_cancelled | default(false))
+  tasks:
+    - name: Work out the names
+      ansible.builtin.set_fact:
+        new_computer_name: "{{ time_machine_computer }} {{ time_machine_version }}"
+        new_host_name: >-
+          {{ (time_machine_computer ~ '-' ~ time_machine_version) | lower
+             | regex_replace('[^a-z0-9]+', '-') | regex_replace('^-+|-+$', '') }}
+
+    - name: Read the current names
+      ansible.builtin.shell: |
+        for name in ComputerName LocalHostName HostName; do
+          printf '%s=%s\n' "$name" "$(/usr/sbin/scutil --get "$name" 2>/dev/null || true)"
+        done
+      register: current_names
+      changed_when: false
+
+    - name: Note whether the names already match
+      ansible.builtin.set_fact:
+        names_current: "{{ current_names.stdout_lines | map('regex_replace', '^[A-Za-z]+=', '') | list }}"
+        names_match: >-
+          {{ current_names.stdout_lines == ['ComputerName=' ~ new_computer_name,
+                                            'LocalHostName=' ~ new_host_name,
+                                            'HostName=' ~ new_host_name] }}
+
+    - name: Say that the names are already set
+      ansible.builtin.debug:
+        msg: "Computer name is already {{ new_computer_name }} (hostname {{ new_host_name }})."
+      when: names_match | bool
+
+    - name: Ask before changing the names
+      ansible.builtin.shell: |
+        dialog --clear --stdout --cr-wrap --title 'Computer name' \
+          --defaultno --yes-label 'Set names' --no-label Skip \
+          --yesno "Set this Mac's names from the Time Machine choice?\n\nComputer name: $NEW_COMPUTER (now: $OLD_COMPUTER)\nHostname: $NEW_HOST (now: ${OLD_LOCAL:-not set})\n\nRuns sudo scutil --set (you are asked for your administrator password in a dialog). The old names are saved so undo can restore them." 16 78 \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        NEW_COMPUTER: "{{ new_computer_name }}"
+        NEW_HOST: "{{ new_host_name }}"
+        OLD_COMPUTER: "{{ names_current[0] }}"
+        OLD_LOCAL: "{{ names_current[1] }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_ESC: '255'
+      register: names_answer
+      changed_when: false
+      failed_when: false
+      when: not (names_match | bool) and not (provision_auto_approve | default(false) | bool)
+
+    - name: Decide whether to set the names
+      ansible.builtin.set_fact:
+        set_names: >-
+          {{ not (names_match | bool) and
+             (provision_auto_approve | default(false) | bool or (names_answer.rc | default(1)) == 0) }}
+
+    - name: Keep the original names for undo (first change only)
+      ansible.builtin.copy:
+        dest: "{{ computer_state_file }}"
+        mode: '0600'
+        force: false
+        content: "{{ {'ComputerName': names_current[0], 'LocalHostName': names_current[1], 'HostName': names_current[2]} | to_nice_json }}\n"
+      when: set_names | bool
+
+    - name: Set the computer name and hostnames
+      ansible.builtin.shell: |
+        set -e
+        sudo -A /usr/sbin/scutil --set ComputerName "$NEW_COMPUTER"
+        sudo -A /usr/sbin/scutil --set LocalHostName "$NEW_HOST"
+        sudo -A /usr/sbin/scutil --set HostName "$NEW_HOST"
+        sudo -A /usr/bin/dscacheutil -flushcache || true
+      args:
+        executable: /bin/bash
+      environment:
+        NEW_COMPUTER: "{{ new_computer_name }}"
+        NEW_HOST: "{{ new_host_name }}"
+        SUDO_ASKPASS: "{{ playbook_dir }}/files/sudo-askpass.sh"
+      when: set_names | bool
+
+    - name: Report the names
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Set the computer name to ' ~ new_computer_name ~ ' and the hostname to ' ~ new_host_name ~ '.'
+             if set_names | bool else 'Left the computer name and hostname unchanged.' }}
+      when: not (names_match | bool)

@@ -126,3 +126,10 @@ participating engines share submissions, so one accepted submission already
 reaches the network. This script contacts all endpoints to match the requested
 behavior. Receipt does not guarantee crawling or indexing; submit URLs when
 content is added, updated, or deleted.
+
+# Little Snitch tracking-host monitoring
+
+`little-snitch/tracking-hosts-vs-littlesnitch.py` checks whether the hosts blocked by
+Pi-hole and AdGuard Home, plus malware and phishing lists, are also blocked in Little
+Snitch, and which of them this Mac contacts. See
+[the Little Snitch documentation](little-snitch/README.md).
