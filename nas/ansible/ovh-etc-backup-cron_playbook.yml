@@ -1,0 +1,97 @@
+---
+# Move the OVH /etc backup from sup's password-requiring cron entry to root cron.
+- name: Schedule the OVH etc backup without interactive sudo
+  hosts: ovh.bnowakowski.pl
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Check the existing backup script
+      ansible.builtin.stat:
+        path: /home/sup/code/homelab/ovh/cron/etc-backup.sh
+      register: etc_backup_source
+
+    - name: Require the backup script
+      ansible.builtin.assert:
+        that: etc_backup_source.stat.isreg | default(false)
+
+    - name: Install a root-owned copy of the backup script
+      ansible.builtin.copy:
+        src: /home/sup/code/homelab/ovh/cron/etc-backup.sh
+        dest: /usr/local/sbin/ovh-etc-backup
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Schedule the backup in root's crontab
+      ansible.builtin.cron:
+        name: Back up OVH etc
+        user: root
+        minute: '5'
+        hour: '0'
+        job: /usr/local/sbin/ovh-etc-backup >/var/log/ovh-etc-backup.log 2>&1
+        backup: true
+
+    - name: Remove the old cron entry that requires an interactive sudo password
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import subprocess
+
+        old = '5 00 * * * sudo /home/sup/code/homelab/ovh/cron/etc-backup.sh'
+        current = subprocess.run(
+            ['crontab', '-u', 'sup', '-l'], check=True, capture_output=True, text=True
+        ).stdout
+        lines = current.splitlines(keepends=True)
+        kept = [line for line in lines if line.strip() != old]
+        if len(kept) != len(lines):
+            subprocess.run(
+                ['crontab', '-u', 'sup', '-'], input=''.join(kept), check=True, text=True
+            )
+            print('removed')
+        PY
+      args:
+        executable: /bin/bash
+      register: old_etc_backup_cron
+      changed_when: "'removed' in old_etc_backup_cron.stdout"
+
+    - name: Get today's date on OVH
+      ansible.builtin.command: date +%Y-%m-%d
+      register: etc_backup_date
+      changed_when: false
+
+    - name: Find today's etc backup archive
+      ansible.builtin.find:
+        paths: /home/sup/code/homelab/ovh/cron/etc-backup
+        patterns: "etc-{{ etc_backup_date.stdout }}_*.tar.gz"
+        file_type: file
+        recurse: false
+      register: etc_backup_today
+
+    - name: Run the missed backup when no archive exists today
+      ansible.builtin.command: /usr/local/sbin/ovh-etc-backup
+      when: etc_backup_today.matched == 0
+
+    - name: Find the resulting backup archive
+      ansible.builtin.find:
+        paths: /home/sup/code/homelab/ovh/cron/etc-backup
+        patterns: "etc-{{ etc_backup_date.stdout }}_*.tar.gz"
+        file_type: file
+        recurse: false
+      register: etc_backup_after
+
+    - name: Require an archive from today
+      ansible.builtin.assert:
+        that: etc_backup_after.matched > 0
+
+    - name: Require the archive to be nonempty
+      ansible.builtin.assert:
+        that: (etc_backup_after.files | sort(attribute='mtime') | last).size > 0
+
+    - name: Verify the newest archive can be read
+      ansible.builtin.command:
+        argv:
+          - tar
+          - -tzf
+          - "{{ (etc_backup_after.files | sort(attribute='mtime') | last).path }}"
+      changed_when: false
