@@ -47,6 +47,7 @@ insecure_hosts=""
 check_summary_title=""
 check_summary_body=""
 check_summary_kind=""
+check_summary_count=0
 use_color=1
 dialog_colors_supported=0
 dialog_success_color=2
@@ -1784,7 +1785,17 @@ show_app_modal() {
   fi
 
   app_display="$(dialog_color_app "$app")"
+  # dialog collapses real newlines into spaces; use its \n escape so each
+  # endpoint (or pod log line) stays on its own line.
+  summary_body="${summary_body//$'\n'/\\n}"
   summary_body="${summary_body}\\Z0"
+
+  # One line per endpoint; grow the box for long lists, capped to the terminal.
+  local modal_height=$((18 + check_summary_count))
+  local term_lines
+  term_lines="$(tput lines 2>/dev/null || echo 40)"
+  [ "$modal_height" -ge 24 ] || modal_height=24
+  [ "$modal_height" -le $((term_lines - 3)) ] || modal_height=$((term_lines - 3))
 
   dialog \
     "${dialog_color_flag[@]}" \
@@ -1793,7 +1804,7 @@ show_app_modal() {
     --begin 2 10 \
     --title "Upgrade $app?" \
     --defaultno \
-    --yesno "App: $app_display\nNamespace: $namespace\nInstalled chart: ${local_version:-unknown}\nTarget chart: ${target_version:-unknown}\n${summary_title}:\n$summary_body\\Z0\n\nProceed with upgrade?" 24 120
+    --yesno "App: $app_display\nNamespace: $namespace\nInstalled chart: ${local_version:-unknown}\nTarget chart: ${target_version:-unknown}\n${summary_title}:\n$summary_body\\Z0\n\nProceed with upgrade?" "$modal_height" 120
 }
 
 show_postcheck_log_review_modal() {
@@ -2119,7 +2130,7 @@ get_ingress_targets() {
       fi
       printf '%s %s %s\n' "$scheme" "$host" "$check_path"
     done <<< "$hosts"
-  done < <(jq -r --arg app "$app" --argjson services "$(jq -cR 'split("\n") | map(select(length > 0))' <<< "$service_names")" '
+  done < <(jq -r --arg app "$app" --argjson services "$(jq -cRs 'split("\n") | map(select(length > 0))' <<< "$service_names")" '
     .items[]
     | select((.metadata.annotations["meta.helm.sh/release-name"]
         // .metadata.labels["app.kubernetes.io/instance"]) == $app
@@ -2211,10 +2222,14 @@ check_ingress_http_codes() {
   check_summary_title="HTTP checks"
   check_summary_body="No ingress hosts found"
   check_summary_kind="http"
+  check_summary_count=0
   check_failed_ingress_summary=""
 
   local ingress_targets
-  ingress_targets="$(get_ingress_targets "$namespace" "$app" | sort -u)"
+  # List https endpoints first, then everything else, each group sorted.
+  ingress_targets="$(get_ingress_targets "$namespace" "$app" | sort -u \
+    | awk '{ print ($1 == "https" ? "0" : "1") " " $0 }' | sort -s -k1,1 \
+    | cut -d' ' -f2-)"
 
   if [ -z "$ingress_targets" ]; then
     collect_no_ingress_pod_log_summary "$app" "$namespace" "$phase"
@@ -2241,7 +2256,7 @@ check_ingress_http_codes() {
     if [ "$curl_used_insecure" -eq 1 ]; then
       insecure_suffix=" (with --insecure)"
     fi
-    summary="${summary}\\Z0${scheme}://${host}${path} -> ${dialog_code}${insecure_suffix}\\Z0"$'\n'
+    summary="${summary}\\Z0  - ${scheme}://${host}${path} -> ${dialog_code}${insecure_suffix}\\Z0"$'\n'
     log "$app [$phase]: ingress ${scheme}://${host}${path} returned $http_code${insecure_suffix}" "$(color_blue "$app") [$phase]: ingress ${scheme}://${host}${path} returned $(color_http_code "$http_code")${insecure_suffix}"
     if [ "$curl_return_code" != "0" ]; then
       log "$app [$phase]: curl failed for ${scheme}://${host}${path} (return_code=$curl_return_code) error=$curl_error_output" "$(color_blue "$app") [$phase]: curl failed for ${scheme}://${host}${path} (return_code=$(color_bash_return_code "$curl_return_code"))"
@@ -2256,6 +2271,7 @@ $ingress_targets
 EOF_HOSTS
 
   check_summary_body="${summary%$'\n'}"
+  check_summary_count="$(printf '%s\n' "$ingress_targets" | grep -c .)"
   check_failed_ingress_summary="${failed_summary%$'\n'}"
 
   if [ "$fail" -eq 1 ]; then
