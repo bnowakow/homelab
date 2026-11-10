@@ -421,7 +421,11 @@ lived), and the preferences plist (`~/Library/Preferences/<bundle id>.plist`, or
 the sandbox container's copy) of every catalog app installed here. Never
 overwrites; apps that are running (for example the terminal) are skipped with a
 note; copied bundles keep the old signatures, so App Store apps such as ForkLift 2
-may need the same Apple ID. Uses the same Homebrew rsync staging, manifest
+may need the same Apple ID. Catalog apps with `"replace_config": true` (Syncthing: its `config.xml` and keys
+in `Application Support/Syncthing`; Windows App, formerly Microsoft Remote Desktop: its saved-connections database in
+the `com.microsoft.rdc.macos` container; the old backup's app is found under its former name) are the exception: an app that already ran writes a fresh config, so a differing
+fresh file is moved to `~/.homelab-provision-state/replaced-by-restore/` and the backup's copy is put in place (quit
+the app first, otherwise it is skipped with a note). Uses the same Homebrew rsync staging, manifest
 (`time-machine-apps.jsonl`) and undo as the other backup copies; `TEST` copies one
 plist and no app.
 

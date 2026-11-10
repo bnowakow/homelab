@@ -24,6 +24,7 @@ prints {"full_disk_access": "granted"|"missing"|"unknown", "app": NAME}.
        copy_time_machine_downloads.py --detach
 detaches a backup that was kept attached (prints {"detached": true|false}).
 """
+import filecmp
 import json
 import os
 from pathlib import Path
@@ -504,6 +505,30 @@ def application_roots(backup_home):
             (backup_home / "Applications", Path.home() / "Applications")]
 
 
+# Config files of apps marked "replace_config" in the catalog: an app that ran before the copy (Syncthing
+# right after its cask install) has already written a fresh file there, which must not keep the restored
+# one out. The fresh file is moved to REPLACED_DIR first.
+REPLACE_EXISTING = set()
+REPLACED_DIR = Path.home() / ".homelab-provision-state" / "replaced-by-restore"
+
+
+def set_aside_replaced(plists):
+    """Move fresh files that differ from the backup's out of the way; return how many."""
+    moved = 0
+    for relative, source in plists:
+        target = Path.home() / relative
+        if relative in REPLACE_EXISTING and target.is_file() and not target.is_symlink() \
+                and not filecmp.cmp(target, source, shallow=False):
+            saved = REPLACED_DIR / relative
+            if saved.exists():    # keep the first fresh file across reruns
+                saved = saved.with_name(saved.name + "." + time.strftime("%Y%m%d%H%M%S"))
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(target), str(saved))
+            progress(f"Kept the fresh {relative} as {saved}")
+            moved += 1
+    return moved
+
+
 def plan_apps(catalog, backup_home, mode, only=None, matched=None):
     """Plan app bundles (from_backup, missing here) and preference plists.
 
@@ -584,6 +609,8 @@ def plan_apps(catalog, backup_home, mode, only=None, matched=None):
                 found_files.append(path)
             for found in found_files:
                 plists.append((found.relative_to(backup_home), found))
+                if app.get("replace_config"):
+                    REPLACE_EXISTING.add(found.relative_to(backup_home))
                 if matched is not None and app["name"] not in matched:
                     matched.append(app["name"])
     if mode == "TEST":
@@ -863,6 +890,7 @@ def copy_apps(catalog, backup, user, manifest, mode, only=None):
         skipped += kept
         copied_bundles.append(folder.name)
     if plists:
+        set_aside_replaced(plists)
         progress(f"Copying {len(plists)} preference file(s) into {Path.home()}/Library...")
         copied_plists, kept = copy_files(plists, home, Path.home(), manifest, base / "plists", backup.name)
         skipped += kept
