@@ -5,8 +5,8 @@
 # confirm, then check again; Abort (the default) or a missing terminal stops.
 # The first dialog also offers "Quit it for me" (a normal quit request); when
 # the app is still running afterwards, the button becomes "Force quit it"
-# (SIGTERM, then SIGKILL), which can lose unsaved work. A fourth button, "Skip
-# copy", sets quit_skip_copy so the caller leaves this copy out (nothing is saved:
+# (SIGTERM, then SIGKILL), which can lose unsaved work. "Skip copy" (left of
+# Abort, like Skip in the other dialogs) sets quit_skip_copy so the caller leaves this copy out (nothing is saved:
 # the question is asked again on the next run).
 - name: "Check that {{ quit_app_name }} is not running"
   ansible.builtin.shell: 'pgrep -x -u "$(id -u)" "$PROCESS"'
@@ -26,8 +26,8 @@
       hint="Quit it yourself (Cmd+Q) and choose \"I quit it\" to check again, or let provisioning ask it to quit. \"Skip copy\" leaves this copy out for now."
     fi
     dialog --clear --stdout --cr-wrap --title "Quit $APP_NAME" \
-      --yes-label "I quit it" --no-label Abort \
-      --extra-button --extra-label "$extra" --help-button --help-label "Skip copy" --default-button no \
+      --yes-label "I quit it" --extra-button --extra-label "$extra" --no-label "Skip copy" \
+      --help-button --help-label Abort --default-button help \
       --yesno "$APP_NAME is running. It keeps its data open and rewrites it when it closes, which would conflict with the copied data.\n\n$hint" 12 78 \
       < "$PROVISION_TTY" 2> "$PROVISION_TTY"
   args:
@@ -72,20 +72,20 @@
       when it closes, then rerun provisioning. Your answers are saved.
   when: >-
     quit_check.rc == 0 and
-    (quit_answer.rc not in [0, 2, 3] or quit_attempt | int >= 10)
+    (quit_answer.rc not in [0, 1, 3] or quit_attempt | int >= 10)
 
 - name: "Skip this copy because {{ quit_app_name }} keeps running"
   ansible.builtin.set_fact:
     quit_skip_copy: true
-  when: quit_check.rc == 0 and quit_answer.rc == 2
+  when: quit_check.rc == 0 and quit_answer.rc == 1
 
 - name: Count the attempt
   ansible.builtin.set_fact:
     quit_next_attempt: "{{ quit_attempt | int + 1 }}"
-  when: quit_check.rc == 0 and quit_answer.rc != 2
+  when: quit_check.rc == 0 and quit_answer.rc != 1
 
 - name: "Check {{ quit_app_name }} again"
   ansible.builtin.include_tasks: wait-for-app-quit.yml
   vars:
     quit_attempt: "{{ quit_next_attempt }}"
-  when: quit_check.rc == 0 and quit_answer.rc != 2
+  when: quit_check.rc == 0 and quit_answer.rc != 1

@@ -12,12 +12,17 @@
 
     - name: Check whether the Time Machine share is mounted
       ansible.builtin.shell: |
-        mounts=$(mount)
-        if [[ "$mounts" == *" on $VOLUME (smbfs"* ]]; then echo mounted; else echo missing; fi
+        # The share only counts when it comes from the NAS address of the current
+        # location (local or remote); one mounted from the other address is "wrong-host".
+        line=$(mount | grep -F " on $VOLUME (smbfs" || true)
+        if [[ -z "$line" ]]; then echo missing
+        elif [[ "$line" == *"@nas.$NAS_DOMAIN/"* || "$line" == "//nas.$NAS_DOMAIN/"* ]]; then echo mounted
+        else echo wrong-host; fi
       args:
         executable: /bin/bash
       environment:
         VOLUME: "{{ time_machine_volume }}"
+        NAS_DOMAIN: "{{ nas_domain | default('localdomain.bnowakowski.pl') }}"
       register: finder_share_state
       changed_when: false
 
@@ -45,10 +50,25 @@
         # A saved confirmation never replaces this live check. Compare captured
         # output: with pipefail, mount | grep -q can fail when grep exits early.
         share_mounted() {
-          local mounts
-          mounts=$(mount)
-          [[ "$mounts" == *" on $VOLUME (smbfs"* ]]
+          local line
+          line=$(mount | grep -F " on $VOLUME (smbfs" || true)
+          [[ "$line" == *"@nas.$NAS_DOMAIN/"* || "$line" == "//nas.$NAS_DOMAIN/"* ]]
         }
+        # Mounted from the address of the other location (for example Tailscale after
+        # coming home): detach a kept backup image, then unmount so it is mounted again.
+        if ! share_mounted && mount | grep -qF " on $VOLUME (smbfs"; then
+          printf 'The share at %s is connected through another NAS address than smb://nas.%s. Detaching the backup and reconnecting...\n' "$VOLUME" "$NAS_DOMAIN" > "$PROVISION_TTY"
+          "$PYTHON" "$DETACH_SCRIPT" --detach > /dev/null 2>&1 || true
+          # Each attempt is limited to 30 seconds: a dead Tailscale connection can make
+          # a normal unmount hang. The share is a read-only source, so forcing is safe.
+          limited() { perl -e 'alarm shift; exec @ARGV' 30 "$@" > /dev/null 2>&1 || true; }
+          limited diskutil unmount "$VOLUME"
+          if mount | grep -qF " on $VOLUME (smbfs"; then limited diskutil unmount force "$VOLUME"; fi
+          if mount | grep -qF " on $VOLUME (smbfs"; then limited umount -f "$VOLUME"; fi
+          if mount | grep -qF " on $VOLUME (smbfs"; then
+            note="The share at $VOLUME is still connected through another NAS address and even a forced unmount failed (is the backup image still attached? see hdiutil info). Eject it in Finder (or run: diskutil unmount force $VOLUME), then choose Confirm to continue or Abort to stop.\n\n"
+          fi
+        fi
         # Try to mount it automatically first: `open smb://...` makes Finder mount
         # the share with the Keychain sign-in saved for it, and macOS itself asks for
         # the NAS password when none is saved (typed by you, never by this
@@ -77,6 +97,8 @@
         TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
         VOLUME: "{{ time_machine_volume }}"
         NAS_DOMAIN: "{{ nas_domain | default('localdomain.bnowakowski.pl') }}"
+        PYTHON: "{{ ansible_playbook_python }}"
+        DETACH_SCRIPT: "{{ playbook_dir }}/files/copy_time_machine_downloads.py"
       changed_when: false
       failed_when: false
       register: finder_connection_answer

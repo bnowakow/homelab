@@ -9,7 +9,7 @@
       ansible.builtin.shell: |
         set -euo pipefail
         umask 077
-        if [[ "$UNATTENDED" != true ]]; then unset HOMEBREW_NO_ASK; fi
+        if [[ "$AUTO_APPROVE" != true ]]; then unset HOMEBREW_NO_ASK; fi
         installed_casks=$(brew list --cask)
         has_cask() { [[ $'\n'"$installed_casks"$'\n' == *$'\n'"$1"$'\n'* ]]; }
         app_present() { [[ -d "/Applications/$1.app" || -d "$HOME/Applications/$1.app" ]]; }
@@ -69,9 +69,9 @@
         executable: /bin/bash
       environment:
         STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
-        UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+        AUTO_APPROVE: "{{ provision_auto_approve | default(false) | bool | lower }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
-        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | default(false) | bool else '' }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_auto_approve | default(false) | bool else '' }}"
         HOMEBREW_NO_AUTO_UPDATE: '1'
         HOMEBREW_NO_INSTALL_CLEANUP: '1'
         HOMEBREW_NO_INSTALL_UPGRADE: '1'

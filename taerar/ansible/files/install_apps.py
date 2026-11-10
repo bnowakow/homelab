@@ -13,6 +13,7 @@ One failed install never stops the others. The last stdout line is a JSON summar
 """
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,28 @@ def run(cmd, tty, check=False, capture=False, env=None):
         return subprocess.run(cmd, stdin=stream, stdout=stream, stderr=stream, env=env)
     finally:
         stream.close()
+
+
+def app_store_account():
+    """The Apple ID the App Store is signed in with, or None when unknown. mas 7 cannot
+    tell, so read the active iTunesStore account's username (read-only) from the macOS
+    Accounts database; it needs Full Disk Access for the terminal, otherwise None."""
+    database = Path.home() / "Library" / "Accounts" / "Accounts4.sqlite"
+    try:
+        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        try:
+            row = connection.execute(
+                "SELECT a.ZUSERNAME FROM ZACCOUNT a JOIN ZACCOUNTTYPE t ON a.ZACCOUNTTYPE = t.Z_PK "
+                "WHERE t.ZIDENTIFIER = 'com.apple.account.iTunesStore' AND a.ZACTIVE = 1 LIMIT 1").fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+    return row[0].lower() if row and row[0] else None
+
+
+def already_signed_in(account):
+    return bool(account) and app_store_account() == account.lower()
 
 
 def note(tty, message):
@@ -90,7 +113,7 @@ def main():
     # Casks such as Docker Desktop run sudo; tasks have no terminal, so Homebrew
     # (which adds -A when this is set) asks through the askpass dialog.
     brew_env["SUDO_ASKPASS"] = str(Path(__file__).with_name("sudo-askpass.sh"))
-    if os.environ.get("UNATTENDED") == "true":
+    if os.environ.get("AUTO_APPROVE") == "true":
         brew_env["HOMEBREW_NO_ASK"] = "1"
     else:
         brew_env.pop("HOMEBREW_NO_ASK", None)
@@ -103,8 +126,8 @@ def main():
         mas_installed = {line.split()[0] for line in mas_out.stdout.splitlines() if line.split()}
 
     def present(app):
-        bundle = app["app"] + ".app"
-        if any((root / bundle).exists() for root in (Path("/Applications"), home / "Applications")):
+        bundles = [app["app"] + ".app"] + [alias + ".app" for alias in app.get("aliases", [])]
+        if any((root / bundle).exists() for bundle in bundles for root in (Path("/Applications"), home / "Applications")):
             return True
         if "cask" in app and app["cask"] in installed_casks:
             return True
@@ -158,7 +181,10 @@ def main():
         groups = [(account, group) for account, group in groups if group]
         signed_in_as = None   # the account the user confirmed last (None: not switched)
         for number, (account, group) in enumerate(groups):
-            if number > 0 or account != normal:
+            if already_signed_in(account):
+                note(tty, f"The App Store is already signed in as {account}; not asking to switch.")
+                signed_in_as = account
+            elif number > 0 or account != normal:
                 if not confirm_account_switch(tty, account, [a["name"] for a in group]):
                     for a in group:
                         record_failure(summary, f"{a['name']} (mas {a['mas']}, App Store account {account} not used)")
@@ -167,7 +193,7 @@ def main():
             install_store_group(group, summary, tty)
         # Always hand the App Store back to the normal account after another
         # account was used, even when no app of the normal account is left.
-        if normal and signed_in_as not in (None, normal):
+        if normal and signed_in_as not in (None, normal) and not already_signed_in(normal):
             confirm_account_switch(tty, normal, [])
     print(json.dumps(summary))
     return 0
@@ -196,7 +222,7 @@ def install_store_group(group, summary, tty):
                 summary["installed"].append(app["name"])
                 break
             note(tty, f"FAILED: {app['name']} (ADAM ID {app['mas']}): mas exit {result.returncode}")
-            if signed_in or os.environ.get("UNATTENDED") == "true":
+            if signed_in or os.environ.get("AUTO_APPROVE") == "true":
                 record_failure(summary, f"{app['name']} (mas {app['mas']})")
                 skipped = not signed_in
                 break
@@ -208,7 +234,7 @@ def install_store_group(group, summary, tty):
 
 def confirm_account_switch(tty, account, names):
     """Ask the user to switch the App Store to this Apple ID and confirm.
-    The dialog appears with --unattended too; Skip is the default."""
+    The dialog appears with --automatically-approve too; Skip is the default."""
     run(["open", "-a", "App Store"], tty)
     if names:
         text = (f"Switch the App Store to the Apple ID {account} to install:\n\n" + ", ".join(names) +

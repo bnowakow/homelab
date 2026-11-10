@@ -20,7 +20,7 @@
           - "{{ env_name }}"
           - "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
       environment:
-        UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+        AUTO_APPROVE: "{{ provision_auto_approve | default(false) | bool | lower }}"
       register: apps_install
       failed_when: apps_install.rc != 0
       changed_when: (apps_install.stdout_lines | last | from_json).installed | length > 0

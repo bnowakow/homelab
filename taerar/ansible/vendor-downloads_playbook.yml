@@ -1,0 +1,187 @@
+# The very last step: the vendor-download apps (the files/apps.json entries marked
+# "vendor": no Homebrew cask and no usable App Store listing) are installed by hand.
+# List them, let the user install them, then offer a checklist of
+# the ones installed so their preferences can be copied from the selected backup. Apps that
+# are installed here and whose preferences were not copied before are preselected.
+- name: Install vendor downloads by hand and copy their preferences from the backup
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    vendor_env: "{{ provision_env | default('PROD') }}"
+    vendor_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+  pre_tasks:
+    # Preferences come from the backup, so this needs the same choices as the apps copy.
+    - name: Skip unless apps and preferences are copied from a backup
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_action | default('cancelled')) != 'create' or
+        (time_machine_copy_from | default(none)) in [none, 'none'] or
+        (time_machine_saved_cancelled | default(false)) or
+        (time_machine_copy_apps | default('skip')) != 'copy' or
+        not (provision_full_disk_access | default(true) | bool)
+  tasks:
+    - name: List the vendor downloads and whether they are installed here
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - -I
+          - -c
+          - |
+            import json, os, re, sys
+            sys.path.insert(0, sys.argv[2])
+            import copy_status
+            history = copy_status.read_status()
+            apps = [a for a in json.load(open(sys.argv[1]))["apps"] if a.get("vendor")]
+            roots = ["/Applications", os.path.expanduser("~/Applications")]
+            out = []
+            for app in apps:
+                match = re.search(r"download from (.+)$", app["manual"])
+                out.append({"name": app["name"],
+                            "where": match.group(1) if match else "the vendor's website",
+                            "installed": any(os.path.isdir(f"{root}/{app['app']}.app") for root in roots),
+                            # preferences were copied for this app from this backup bundle in an earlier run
+                            "prefs_copied": (history.get("vendor-prefs:" + app["name"]) or {}).get("state") == "done"
+                                            and history["vendor-prefs:" + app["name"]].get("bundle") == sys.argv[3]})
+            print(json.dumps(out))
+          - "{{ playbook_dir }}/files/apps.json"
+          - "{{ playbook_dir }}/files"
+          - "{{ vendor_source_bundle | basename }}"
+      environment:
+        PYTHONDONTWRITEBYTECODE: '1'
+      register: vendor_list
+      changed_when: false
+
+    - name: Remember the vendor downloads
+      ansible.builtin.set_fact:
+        vendor_apps: "{{ vendor_list.stdout | from_json }}"
+
+    - name: Ask to install the vendor downloads
+      ansible.builtin.shell: |
+        dialog --clear --stdout --cr-wrap --title 'Vendor downloads' \
+          --yes-label Continue --no-label Skip --help-button --help-label Abort --default-button help \
+          --yesno "These apps have no Homebrew cask and no usable App Store listing, so they are installed by hand from the vendor:\n\n$LIST\n\nInstall the ones you need now (this window can wait), then choose Continue to mark the installed ones and copy their preferences from the backup. Skip leaves them for later." 22 100 \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        LIST: |-
+          {% for app in vendor_apps %}{{ ('[installed, preferences copied] ' if app.prefs_copied else '[installed] ') if app.installed else '[missing] ' }}{{ app.name }} - {{ app.where }}
+          {% endfor %}
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_ESC: '255'
+        DIALOG_HELP: '2'
+      register: vendor_intro
+      changed_when: false
+      failed_when: false
+
+    - name: Stop after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Vendor downloads aborted. Nothing was copied by this step; earlier provisioning steps remain applied.'
+             if vendor_intro.rc in [2, 255] else
+             'Could not show the vendor downloads dialog. Run provisioning from an interactive Terminal.' }}
+      when: vendor_intro.rc not in [0, 1]
+
+    - name: Skip when the user chose Skip
+      ansible.builtin.meta: end_play
+      when: vendor_intro.rc == 1
+
+    # Preselected: installed apps whose preferences were not copied from this backup before.
+    # Only apps still marked when the user confirms are touched.
+    - name: Ask which vendor apps were installed
+      ansible.builtin.shell: |
+        items=()
+        while IFS='|' read -r name status state; do
+          [ -n "$name" ] || continue
+          items+=("$name" "$status" "$state")
+        done <<< "$LABELS"
+        dialog --clear --stdout --separate-output --title 'Installed vendor apps' \
+          --ok-label 'Copy preferences' --cancel-label Abort --default-button cancel \
+          --checklist "Mark the apps you installed (Space toggles; installed apps whose preferences were not copied before are marked). Their preferences are copied from the backup; apps the backup has no preferences for are reported." 20 90 {{ vendor_apps | length }} \
+          "${items[@]}" \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        LABELS: |-
+          {% for app in vendor_apps %}{{ app.name }}|{{ ('installed here, preferences copied before' if app.prefs_copied else 'installed here, preferences not copied yet') if app.installed else 'not found here' }}|{{ 'on' if app.installed and not app.prefs_copied else 'off' }}
+          {% endfor %}
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_CANCEL: '1'
+        DIALOG_ESC: '255'
+      register: vendor_choice
+      changed_when: false
+      failed_when: false
+
+    - name: Stop after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Vendor downloads aborted. Nothing was copied by this step; earlier provisioning steps remain applied.'
+             if vendor_choice.rc in [1, 255] else
+             'Could not show the vendor apps checklist. Run provisioning from an interactive Terminal.' }}
+      when: vendor_choice.rc != 0
+
+    # The checklist tags are the app names, one per line of output.
+    - name: Remember the marked apps
+      ansible.builtin.set_fact:
+        vendor_selected: "{{ vendor_choice.stdout_lines | select | list }}"
+
+    - name: Say that nothing was marked
+      ansible.builtin.debug:
+        msg: No vendor app was marked as installed, so no preferences were copied.
+      when: vendor_selected | length == 0
+
+    - name: Skip when nothing was marked
+      ansible.builtin.meta: end_play
+      when: vendor_selected | length == 0
+
+    - name: Install Homebrew rsync for copying files from backups
+      ansible.builtin.include_tasks: tasks/install-rsync.yml
+
+    - name: Copy the preferences of the marked vendor apps from the latest backup
+      ansible.builtin.shell: >-
+        {{ ansible_playbook_python | quote }}
+        {{ (playbook_dir + '/files/copy_time_machine_downloads.py') | quote }}
+        --vendor-prefs {{ (playbook_dir + '/files/apps.json') | quote }}
+        {{ vendor_selected | to_json | quote }}
+        {{ vendor_source_bundle | quote }}
+        {{ lookup('env', 'HOME') | quote }}
+        {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-vendor-prefs.jsonl') | quote }}
+        {{ vendor_env | quote }}
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" | tr '\r' '\n' | tee -a "${HOMELAB_PROVISION_LOG:-/dev/null}" >&2)
+      args:
+        executable: /bin/bash
+      environment:
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        PYTHONDONTWRITEBYTECODE: '1'
+        HOMELAB_RSYNC: "{{ (rsync_install.stdout_lines | select('match', '^rsync=') | first)[6:] }}"
+      register: vendor_copy
+      changed_when: vendor_copy.rc == 0 and (vendor_copy.stdout | from_json).plists > 0
+      failed_when: false
+
+    - name: Stop with a short explanation when copying the preferences failed
+      ansible.builtin.fail:
+        msg: >-
+          Copying the vendor app preferences failed: {{ (vendor_copy.stderr_lines | default([]) | last)
+          | default('see the message printed above this task.', true) }}
+          The backup was only read and nothing was overwritten. Rerun provisioning to try again.
+      when: vendor_copy.rc != 0
+
+    - name: Report the vendor app preferences copy
+      vars:
+        vendor_summary: "{{ vendor_copy.stdout | from_json }}"
+      ansible.builtin.debug:
+        msg: >-
+          {{ vendor_env }}: copied {{ vendor_summary.plists }} preference file(s) for {{ vendor_selected | join(', ') }}
+          from backup {{ vendor_summary.backup }}; skipped {{ vendor_summary.skipped_existing }} existing item(s).
+          Notes: {{ vendor_summary.notes }}. Undo removes only the copied items that are still unchanged.

@@ -1,7 +1,7 @@
 # When Xcode.app is the active developer directory but its license is not
 # accepted, git, make and Homebrew all fail with "You have not agreed to the
 # Xcode license". Accepting a license is the user's decision, so ask first
-# (Abort is the default); with --unattended the user has chosen to accept
+# (Abort is the default); with --automatically-approve the user has chosen to accept
 # installation prompts, so it is accepted without asking. Either way it runs
 # `sudo -A xcodebuild -license accept` through the askpass password dialog.
 - name: Check whether the Xcode license still needs to be accepted
@@ -34,14 +34,14 @@
   register: xcode_license_choice
   changed_when: false
   failed_when: false
-  when: xcode_license.stdout == 'needed' and not (provision_unattended | default(false) | bool)
+  when: xcode_license.stdout == 'needed' and not (provision_auto_approve | default(false) | bool)
 
 - name: Stop when the Xcode license is not accepted
   ansible.builtin.fail:
     msg: >-
       The Xcode license was not accepted. Run sudo xcodebuild -license in Terminal,
       then rerun provisioning. Earlier steps remain applied.
-  when: xcode_license.stdout == 'needed' and not (provision_unattended | default(false) | bool) and xcode_license_choice.rc != 0
+  when: xcode_license.stdout == 'needed' and not (provision_auto_approve | default(false) | bool) and xcode_license_choice.rc != 0
 
 - name: Accept the Xcode license
   ansible.builtin.command:

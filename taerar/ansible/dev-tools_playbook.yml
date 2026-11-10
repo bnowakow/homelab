@@ -16,7 +16,7 @@
       ansible.builtin.shell: |
         set -euo pipefail
         umask 077
-        if [[ "$UNATTENDED" != true ]]; then unset HOMEBREW_NO_ASK; fi
+        if [[ "$AUTO_APPROVE" != true ]]; then unset HOMEBREW_NO_ASK; fi
         tty() { "$@" < "$PROVISION_TTY" > "$PROVISION_TTY" 2>&1; }
         append() { { [[ -f "$2" ]] && cat "$2"; printf '%s\n' "$1"; } | sed '/^$/d' | sort -u > "$2.tmp"; mv "$2.tmp" "$2"; }
         # name|install name|tap|kind (formula/cask)
@@ -96,9 +96,9 @@
         executable: /bin/bash
       environment:
         STATE_DIR: "{{ lookup('env', 'HOME') }}/.homelab-provision-state"
-        UNATTENDED: "{{ provision_unattended | default(false) | bool | lower }}"
+        AUTO_APPROVE: "{{ provision_auto_approve | default(false) | bool | lower }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
-        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | default(false) | bool else '' }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_auto_approve | default(false) | bool else '' }}"
         HOMEBREW_NO_AUTO_UPDATE: '1'
         HOMEBREW_NO_INSTALL_CLEANUP: '1'
         HOMEBREW_NO_INSTALL_UPGRADE: '1'

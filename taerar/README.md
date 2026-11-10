@@ -3,13 +3,13 @@
 On a new Mac, run this command in Terminal as your normal user, without `sudo`:
 
 ```sh
-/bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --unattended
+/bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --automatically-approve
 ```
 
-The examples use `--unattended` to automatically proceed past installation
+The examples use `--automatically-approve` to automatically proceed past installation
 confirmations such as `Do you want to proceed with the installation? [y/n]`.
-Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
-existing sudo authorization for unattended installation; if necessary, run
+Omit `--automatically-approve` to keep interactive prompts. The Homebrew installer requires
+existing sudo authorization for automatically approved installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
 The script asks for your sudo password itself, once, right at the start (it installs the
 Command Line Tools with `sudo softwareupdate` when missing, and the Homebrew installer
@@ -18,7 +18,7 @@ needs authorized sudo), and keeps that authorization alive while it runs. The
 cached copy.
 The 1Password checks skip dialogs for verified completed setup or explicitly
 reused saved confirmations. Unsaved incomplete or unverified setup still prompts,
-even with `--unattended`. Live agent and GitHub SSH checks still run before
+even with `--automatically-approve`. Live agent and GitHub SSH checks still run before
 switching origin. Undo offers a commit/ignore/Abort dialog for uncommitted work.
 
 It runs the provisioning script from `master`, creates `~/code` if needed,

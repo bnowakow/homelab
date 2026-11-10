@@ -1,6 +1,10 @@
 """Copy ~/Downloads from the latest backup inside a Time Machine sparse bundle.
 
-The bundle is attached read-only and always detached again. Nothing in the
+The bundle is attached read-only. With HOMELAB_KEEP_BACKUP_ATTACHED=true (set by
+provision.sh) it stays attached after the copy and the next copy step reuses it
+instead of repeating the slow network attach; provision.sh detaches it at the end
+of the run (--detach) unless the user chooses to keep it for reruns. Without
+that variable it is detached again right after the copy. Nothing in the
 backup is modified. Existing files in the destination are never overwritten.
 Every created file and directory is recorded in a JSON-lines manifest before it
 is created, so undo-provision.sh can remove exactly what this script added.
@@ -17,6 +21,8 @@ only prints that extension list (nothing is copied).
 Progress goes to stderr; a JSON summary is printed to stdout.
        copy_time_machine_downloads.py --check-access
 prints {"full_disk_access": "granted"|"missing"|"unknown", "app": NAME}.
+       copy_time_machine_downloads.py --detach
+detaches a backup that was kept attached (prints {"detached": true|false}).
 """
 import json
 import os
@@ -49,6 +55,7 @@ import copy_status  # noqa: E402  (records which copies were done; see copy_stat
 
 # Set by main() once the step is known; None for checks that copy nothing.
 STEP = None
+BUNDLE_NAME = None   # name of the backup bundle being copied (for per-app status records)
 STEP_DETAIL = {}
 RESULT = {}
 
@@ -187,6 +194,55 @@ def attach(bundle, mountpoint):
     return whole, devices, volume
 
 
+KEEP_ENV = "HOMELAB_KEEP_BACKUP_ATTACHED"
+NAS_DOMAIN = os.environ.get("HOMELAB_NAS_DOMAIN", "")
+ATTACHMENT_FILE = Path.home() / ".homelab-provision-state" / "backup-attachment.json"
+
+
+def load_attachment(bundle):
+    """Return the record of a still usable kept attachment of this bundle.
+    A record that no longer fits (other bundle, unmounted, ejected) is released."""
+    try:
+        saved = json.loads(ATTACHMENT_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+    try:
+        # The record also holds the NAS address of its location: after switching between
+        # local and remote the old attachment goes through the other address.
+        if (saved["bundle"] == str(bundle.resolve()) and saved.get("nas_domain", "") == NAS_DOMAIN
+                and os.path.ismount(saved["mountpoint"])
+                and Path(saved["backup"]).is_dir()):
+            return saved
+    except (KeyError, OSError):
+        pass
+    release_attachment(saved)
+    return None
+
+
+def save_attachment(**record):
+    ATTACHMENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    ATTACHMENT_FILE.write_text(json.dumps(record))
+
+
+def release_attachment(saved):
+    """Unmount the snapshot, detach the image and forget the record."""
+    snapshot, mount = Path(saved.get("snapshot_mountpoint", "")), Path(saved.get("mountpoint", ""))
+    if saved.get("snapshot_mountpoint") and os.path.ismount(snapshot):
+        subprocess.run(["umount", str(snapshot)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if saved.get("whole"):
+        detach(saved["whole"], saved.get("devices", []))
+    for folder in (snapshot, mount):
+        if str(folder) != ".":
+            try:
+                folder.rmdir()
+            except OSError:
+                pass
+    try:
+        ATTACHMENT_FILE.unlink()
+    except OSError:
+        pass
+
+
 def mount_apfs_backup(devices, mountpoint):
     """Mount the image's APFS backup volume read-only; return its device."""
     # hdiutil may list only whole disks (e.g. disk8 and container disk10), not
@@ -230,7 +286,11 @@ def detach(whole, devices=()):
     attempts += [["diskutil", "unmountDisk", "force", disk] for disk in sorted(disks - {whole})]
     attempts += [["diskutil", "eject", whole]]
     for arguments in attempts:
-        result = subprocess.run(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            # A dead network share can make these hang; give up on one attempt after a minute.
+            result = subprocess.run(arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60)
+        except subprocess.TimeoutExpired:
+            continue
         if result.returncode == 0 and arguments[1] in ("detach", "eject"):
             return True
     progress(f"Warning: could not detach {whole}. Eject it in Finder or run: diskutil eject {whole}")
@@ -444,18 +504,21 @@ def application_roots(backup_home):
             (backup_home / "Applications", Path.home() / "Applications")]
 
 
-def plan_apps(catalog, backup_home, mode):
+def plan_apps(catalog, backup_home, mode, only=None, matched=None):
     """Plan app bundles (from_backup, missing here) and preference plists.
 
     Returns (bundles, plists, notes). bundles: (backup bundle folder, target
     root, file list); plists: (relative path, source) pairs for the home folder;
-    notes: what was skipped and why.
+    notes: what was skipped and why. With `only` (a set of catalog app names, used for
+    apps the user installed by hand) just those apps' preferences are planned, no bundles.
     """
     apps = json.loads(Path(catalog).read_text())["apps"]
+    if only is not None:
+        apps = [app for app in apps if app["name"] in only]
     notes = []
     bundles = []
     present = {}   # app name -> (bundle id, executable) for apps on this Mac after copying
-    if mode == "PROD":
+    if mode == "PROD" and only is None:
         for app in (a for a in apps if a.get("from_backup")):
             name = app["app"] + ".app"
             if any((target / name).exists() for _, target in application_roots(backup_home)):
@@ -475,16 +538,23 @@ def plan_apps(catalog, backup_home, mode):
                 notes.append(f"{app['name']}: not found in the backup")
     plists = []
     for app in apps:
-        name = app["app"] + ".app"
-        backup_bundle = next((root / name for root, _ in application_roots(backup_home) if (root / name).is_dir()), None)
+        # "aliases" are other bundle names the same app has had (e.g. "Pages Creator Studio").
+        names = [app["app"] + ".app"] + [alias + ".app" for alias in app.get("aliases", [])]
+        name = names[0]
+        backup_bundle = next((root / n for n in names for root, _ in application_roots(backup_home)
+                              if (root / n).is_dir()), None)
         if backup_bundle is None:
+            if only is not None:
+                notes.append(f"{app['name']}: not found in the backup, so there are no preferences to copy")
             continue
         identifier, executable = app_bundle_info(backup_bundle)
         if not identifier:
             continue
-        here = any((target / name).exists() for _, target in application_roots(backup_home)) \
-            or any(item[0].name == name for item in bundles)
+        here = any((target / n).exists() for n in names for _, target in application_roots(backup_home)) \
+            or any(item[0].name in names for item in bundles)
         if not here:
+            if only is not None:
+                notes.append(f"{app['name']}: not installed here, preferences not copied")
             continue
         if executable and subprocess.run(["pgrep", "-x", "-u", str(os.getuid()), executable], stdout=subprocess.DEVNULL).returncode == 0:
             notes.append(f"{app['name']}: running, preferences not copied (quit it and rerun)")
@@ -494,6 +564,22 @@ def plan_apps(catalog, backup_home, mode):
             path = backup_home / relative
             if path.is_file() and not path.is_symlink():
                 plists.append((relative, path))
+                if matched is not None and app["name"] not in matched:
+                    matched.append(app["name"])   # this app's preferences exist in the backup
+        # Extra configuration files listed in the catalog ("config_paths", relative to the home folder).
+        for entry in app.get("config_paths", []):
+            path = backup_home / entry
+            found_files = []
+            if path.is_dir() and not path.is_symlink():
+                for folder, directories, names in os.walk(path):
+                    directories.sort()
+                    found_files += [Path(folder) / n for n in sorted(names) if n not in SKIPPED_NAMES]
+            elif path.is_file() and not path.is_symlink():
+                found_files.append(path)
+            for found in found_files:
+                plists.append((found.relative_to(backup_home), found))
+                if matched is not None and app["name"] not in matched:
+                    matched.append(app["name"])
     if mode == "TEST":
         plists = sorted(plists, key=lambda item: str(item[0]))[:1]
     return bundles, plists, notes
@@ -749,11 +835,12 @@ def apply_repo_patches(repos, destination, manifest, work_dir):
     return results
 
 
-def copy_apps(catalog, backup, user, manifest, mode):
+def copy_apps(catalog, backup, user, manifest, mode, only=None):
     """Copy the from_backup app bundles and the preference plists of catalog apps."""
     home = find_user_home(backup, user)
     try:
-        bundles, plists, notes = plan_apps(catalog, home, mode)
+        matched = []
+        bundles, plists, notes = plan_apps(catalog, home, mode, only, matched)
     except PermissionError as error:
         raise CopyError(FULL_DISK_ACCESS) from error
     base = manifest.parent / (manifest.stem + "-work")
@@ -773,7 +860,13 @@ def copy_apps(catalog, backup, user, manifest, mode):
         progress(f"Copying {len(plists)} preference file(s) into {Path.home()}/Library...")
         copied_plists, kept = copy_files(plists, home, Path.home(), manifest, base / "plists", backup.name)
         skipped += kept
-    return {"what": "apps", "backup": backup.name, "mode": mode, "bundles": copied_bundles,
+    if only is not None and mode == "PROD":
+        # Remember per app that its preferences were handled, so the next run preselects only the rest.
+        for name in matched:
+            copy_status.record(f"vendor-prefs:{name}", "done", backup=backup.name, mode=mode,
+                               bundle=BUNDLE_NAME)
+    return {"what": "vendor-prefs" if only is not None else "apps", "backup": backup.name,
+            "mode": mode, "bundles": copied_bundles,
             "plists": copied_plists, "skipped_existing": skipped, "notes": notes}
 
 
@@ -1001,6 +1094,16 @@ def copy_private_data(backup, user, manifest, mode):
 
 
 def main():
+    if sys.argv[1:] == ["--detach"]:
+        # Used by provision.sh at the end of a run.
+        try:
+            saved = json.loads(ATTACHMENT_FILE.read_text())
+        except (OSError, ValueError):
+            print(json.dumps({"detached": False}))
+            return
+        release_attachment(saved)
+        print(json.dumps({"detached": True}))
+        return
     if sys.argv[1:] == ["--check-access"]:
         # Used by full-disk-access_playbook.yml early in provisioning.
         print(json.dumps({"full_disk_access": full_disk_access_status(), "app": responsible_app()}))
@@ -1023,6 +1126,9 @@ def main():
         what, args = "system-settings", args[1:]
     elif args and args[0] == "--apps":
         what, catalog, args = "apps", args[1], args[2:]
+    elif args and args[0] == "--vendor-prefs":
+        # Preferences only, for apps installed by hand: --vendor-prefs CATALOG JSON_LIST_OF_NAMES ...
+        what, catalog, only, args = "vendor-prefs", args[1], set(json.loads(args[2])), args[3:]
     if what == "dia-extensions":
         args += ["-", "-", "PROD"]  # listing only: no destination, manifest or copy
     bundle, destination, manifest, mode = Path(args[0]), Path(args[1]), Path(args[2]), args[3]
@@ -1030,20 +1136,35 @@ def main():
         raise CopyError("Environment must be PROD or TEST.")
     if not bundle.is_dir():
         raise CopyError(f"Backup not found: {bundle}. Connect the Time Machine share in Finder.")
-    global STEP
+    global STEP, BUNDLE_NAME
+    BUNDLE_NAME = bundle.name
     STEP = f"folder:{folder_name}" if what == "folder" else what
     # Fail in seconds, before the slow network attach, when access is missing.
     check_full_disk_access()
     copy_status.record(STEP, "started", bundle=bundle.name, mode=mode)
-    mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-"))
-    snapshot_mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-snapshot-"))
-    whole = None
+    keep = os.environ.get(KEEP_ENV) == "true"
+    saved = load_attachment(bundle)
+    devices, volume, backup = [], None, None
+    if saved:
+        mountpoint, snapshot_mountpoint = Path(saved["mountpoint"]), Path(saved["snapshot_mountpoint"])
+        whole, devices, volume, backup = saved["whole"], saved["devices"], saved["volume"], Path(saved["backup"])
+    else:
+        mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-"))
+        snapshot_mountpoint = Path(tempfile.mkdtemp(prefix="homelab-time-machine-snapshot-"))
+        whole = None
     repos = {}
     try:
-        progress(f"Attaching {bundle.name} read-only (this can take a while over the network)...")
-        with attach_heartbeat(bundle.name):
-            whole, devices, volume = attach(bundle, mountpoint)
-        backup = latest_backup(mountpoint, volume, snapshot_mountpoint)
+        if saved:
+            progress(f"Reusing {bundle.name}, still attached from an earlier step.")
+        else:
+            progress(f"Attaching {bundle.name} read-only (this can take a while over the network)...")
+            with attach_heartbeat(bundle.name):
+                whole, devices, volume = attach(bundle, mountpoint)
+            backup = latest_backup(mountpoint, volume, snapshot_mountpoint)
+            if keep:
+                save_attachment(bundle=str(bundle.resolve()), nas_domain=NAS_DOMAIN, whole=whole, devices=devices, volume=volume,
+                                mountpoint=str(mountpoint), snapshot_mountpoint=str(snapshot_mountpoint),
+                                backup=str(backup))
         user = os.environ.get("USER") or Path.home().name
         progress(f"Latest backup: {backup.name}")
         if what == "dia-extensions":
@@ -1064,6 +1185,9 @@ def main():
             return
         if what == "apps":
             emit(copy_apps(catalog, backup, user, manifest, mode))
+            return
+        if what == "vendor-prefs":
+            emit(copy_apps(catalog, backup, user, manifest, mode, only))
             return
         try:
             if what == "dia":
@@ -1110,17 +1234,12 @@ def main():
                           "skipped_existing": skipped,
                           "copied_names": [str(relative) for relative, _ in files][:5]})
     finally:
-        # Unmount our snapshot mount first; it would otherwise keep the image busy.
-        if os.path.ismount(snapshot_mountpoint):
-            subprocess.run(["umount", str(snapshot_mountpoint)],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if whole:
-            detach(whole, devices)
-        for folder in (snapshot_mountpoint, mountpoint):
-            try:
-                folder.rmdir()
-            except OSError:
-                pass
+        if keep and backup is not None:
+            # Stays attached for the next copy step; provision.sh detaches it at the end.
+            pass
+        else:
+            release_attachment({"snapshot_mountpoint": str(snapshot_mountpoint), "mountpoint": str(mountpoint),
+                                "whole": whole, "devices": devices})
 
 
 def finish_status(state, **detail):

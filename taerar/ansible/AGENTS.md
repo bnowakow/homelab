@@ -8,7 +8,7 @@
   cancellation message, not dump the shell script as a failed Ansible command.
   Set DIALOG_ERROR separately from Escape so real rendering errors still fail
   with useful guidance. Keep cancelled selections distinct from completed ones.
-- Show `--unattended` in the bootstrap command at the top of `provision.sh` and
+- Show `--automatically-approve` in the bootstrap command at the top of `provision.sh` and
   in both `taerar/README.md` and this directory's README. The switch must select
   the installation-progressing answer for confirmation prompts using each tool's
   supported noninteractive options. Without it, preserve interactive prompts.
@@ -84,7 +84,7 @@
   System Settings step. Save its confirmation under onepassword.autofill,
   separate from onepassword.setup, so older saved answers cannot hide it.
 - Install dialog early through Ansible. Show incomplete/unverified 1Password
-  readiness checkpoints even with --unattended, but skip verified completed
+  readiness checkpoints even with --automatically-approve, but skip verified completed
   checkpoints and explicitly reused saved confirmations. Unknown/unreadable state must never be treated as ready. Abort/Escape
   aborts; do not read vault contents or log public keys/account data during probes.
 - Before the setup prompt, test `ssh -T git@github.com` with the 1Password agent
@@ -102,7 +102,7 @@
   cancellation as Abort. If dialog/terminal is unavailable or commit fails, stop.
 - After tools are installed, show the Finder NAS Time Machine share dialog. Copy the SMB address to
   the clipboard and show Finder/Cmd+K/paste/+/Connect instructions. Confirm
-  continues; Abort/Escape stops, even with --unattended. This is a manual step:
+  continues; Abort/Escape stops, even with --automatically-approve. This is a manual step:
   do not silently edit Finder favorites, store NAS credentials, or snapshot the
   previous clipboard. User-created favorites/connections are preserved by undo.
   Check the live smbfs mount at /Volumes/time-machine: show the dialog only
@@ -112,7 +112,7 @@
   directories in /Volumes/time-machine. Group a trailing space plus numeric
   version under its computer; list unversioned names directly. Show the inventory
   above Create new computer / Restore existing computer menu choices, including
-  with --unattended. Abort/Escape stops. Do not enter or modify sparsebundles;
+  with --automatically-approve. Abort/Escape stops. Do not enter or modify sparsebundles;
   save each accepted intermediate choice according to the shared-store rule
   below; never persist Abort or invalid input.
 - Create opens a second menu with the same computer/version list and the
@@ -275,7 +275,7 @@
   link), so every task or script that runs `brew install --cask` must set `SUDO_ASKPASS`
   to this helper; Homebrew then adds `-A` itself.
 - Xcode license (tasks/xcode-license.yml): ask before accepting (default Abort); with
-  `--unattended` accept without asking via `sudo -A xcodebuild -license accept`.
+  `--automatically-approve` accept without asking via `sudo -A xcodebuild -license accept`.
 - `mas install` only installs apps the signed-in Apple ID already got; a free app it
   never downloaded fails with "No downloads initiated", so the installer falls back to
   `mas get` before reporting a failure.
@@ -297,6 +297,10 @@
   offers "Skip it / Copy again / Abort" (default Abort) only when copy-status.json shows an earlier finish
   (`done`, or `last_completed` kept across a restart) for the same bundle and mode (copy_status.py done STEP BUNDLE MODE); never save the
   answer, Abort/Esc stop provisioning; treat no TTY or dialog errors as Copy again. New one-shot copy steps should use it.
+- vendor-downloads_playbook.yml runs last (after the folders copy), only with a backup copy source
+  and apps copy chosen, also with --automatically-approve (it still needs the user's choices): list the apps marked "vendor": true in apps.json,
+  ask Continue/Skip/Abort (default Abort), then a checklist preselecting only installed apps whose preferences were not copied from this bundle before (vendor-prefs:<name> in copy-status.json); copy only
+  the preferences of marked apps (--vendor-prefs, no bundles, manifest time-machine-vendor-prefs).
 - provision.sh exports HOMELAB_PROVISION_LOG and ANSIBLE_LOG_PATH (one file per run in
   ~/Library/Logs/homelab-provision, symlink provision-latest.log). Copy tasks that redirect
   helper stderr to the terminal must also append it: `2> >(tee "$PROVISION_TTY" | tr '\r' '\n' |

@@ -15,7 +15,7 @@ install Prezto/Powerlevel10k, log in through the browser, and switch origin to S
 1. Open the Mac App Store and sign in to your Apple Account. This is required
    for the Safari extension installation; confirm your account is shown in the
    App Store before running provisioning.
-2. For `--unattended`, run `sudo -v` in the same Terminal first if administrator
+2. For `--automatically-approve`, run `sudo -v` in the same Terminal first if administrator
    authorization is not already cached. App Store/Touch ID/password prompts
    still require you to approve them.
 
@@ -33,13 +33,13 @@ On a new Mac, run as your normal user, without `sudo`. This downloads and execut
 the script from the `master` branch:
 
 ```sh
-/bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --unattended
+/bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --automatically-approve
 ```
 
-The examples use `--unattended` to automatically proceed past installation
+The examples use `--automatically-approve` to automatically proceed past installation
 confirmations such as `Do you want to proceed with the installation? [y/n]`.
-Omit `--unattended` to keep interactive prompts. The Homebrew installer requires
-existing sudo authorization for unattended installation; if necessary, run
+Omit `--automatically-approve` to keep interactive prompts. The Homebrew installer requires
+existing sudo authorization for automatically approved installation; if necessary, run
 `sudo -v` first. Passwords and macOS permission dialogs cannot be auto-answered.
 The script asks for your sudo password itself, once, right at the start (it installs the
 Command Line Tools with `sudo softwareupdate` when missing, and the Homebrew installer
@@ -57,14 +57,14 @@ missing. Existing checkouts are reused and fast-forwarded to the latest commit w
 `origin` to `git@github.com:bnowakow/homelab.git`. Git must be available to clone; on a fresh
 Mac the script first checks for the Command Line Tools and installs them from the
 terminal with `sudo softwareupdate` (sudo asks for your password, also with
-`--unattended`; it is never auto-answered). If that fails it falls back to Apple's
+`--automatically-approve`; it is never auto-answered). If that fails it falls back to Apple's
 installer dialog (`xcode-select --install`, click Install) and waits until git works,
 then continues by itself. Undo never removes the tools.
 
 From an existing checkout, you can also run from the repository root:
 
 ```sh
-./taerar/ansible/provision.sh --unattended
+./taerar/ansible/provision.sh --automatically-approve
 ```
 
 The script reuses Homebrew if it is on `PATH` or in either standard macOS
@@ -180,7 +180,7 @@ Then `provision.sh` runs `onepassword_playbook.yml` before GitHub
 login. It installs the Homebrew `1password` cask and `mas` if missing, then uses
 `sudo -A mas get 1569813296` (mas 7 needs root; tasks have no terminal, so `files/sudo-askpass.sh` shows a native macOS hidden password dialog that only sudo receives) to install [1Password for Safari](https://apps.apple.com/us/app/1password-for-safari/id1569813296?mt=12).
 Existing applications are preserved. The Mac App Store can require Apple Account
-or administrator authentication even with `--unattended`.
+or administrator authentication even with `--automatically-approve`.
 
 After installation, sign in to 1Password for Mac and enable **Safari > Settings >
 Extensions > 1Password for Safari**, approving website permissions as needed.
@@ -204,7 +204,7 @@ to enable **1Password > Settings > Developer > Use the SSH Agent**, make your SS
 key available, register its public key on GitHub,
 enable the Safari extension, and enable macOS AutoFill. It then checks the 1Password agent with
 `ssh-add -l` using its socket. If unavailable or empty, provisioning stops with
-instructions. Unsaved incomplete/unverified checkpoints still appear with `--unattended`; Abort/Escape
+instructions. Unsaved incomplete/unverified checkpoints still appear with `--automatically-approve`; Abort/Escape
 aborts. Safari detection reads extension-state plists for default and discovered
 profiles. Unreadable, missing, conflicting or unrecognized state falls back to
 manual confirmation; app installation/PlugInKit registration is not proof of
@@ -302,12 +302,12 @@ files are preserved. Undo removes only the new checkout and runcom links, stoppi
 if they have since been modified. Use a font with the needed prompt glyphs in
 your terminal if they do not display correctly.
 
-It then runs `github-cli_playbook.yml` locally, forwarding the `--unattended`
+It then runs `github-cli_playbook.yml` locally, forwarding the `--automatically-approve`
 setting. It installs `gh` using Homebrew and checks
 `gh auth status --hostname github.com`. If no login exists, it runs
 `gh auth login --hostname github.com --web --git-protocol https --skip-ssh-key`.
 The device code and browser instructions appear directly in Terminal; browser
-authorization still requires your participation with `--unattended`. Existing
+authorization still requires your participation with `--automatically-approve`. Existing
 credentials that fail validation stop provisioning rather than being overwritten.
 It then runs `repository-origin_playbook.yml` to switch `origin` fetch and any
 explicit push URLs to `git@github.com:bnowakow/homelab.git`. The original URLs
@@ -345,7 +345,7 @@ those settings using private file formats.
 
 `apps_playbook.yml` (runs after `dev-tools_playbook.yml`) installs the applications
 listed in `files/apps.json`: Homebrew casks, App Store apps through `mas install`
-(mas cannot report the sign-in, so the first install is the check: on failure the App Store opens and you sign in and retry, or skip the store apps; a failed `mas install` is retried with `mas get`, which also fetches free apps the Apple ID never downloaded; mas 7 cannot report or change the account, so every store app has an `"account"` in `apps.json` (`app_store_accounts` lists the order: `sup3r0@gmail.com` first, then the normal `dobrowolski.nowakowski@gmail.com`); the installer asks you to switch the App Store to each account in turn, confirms with you, installs that account's apps and moves on, and after any other account was used it always asks you to switch back to `dobrowolski.nowakowski@gmail.com`, even when no app of that account is left; dialogs also appear under `--unattended`) and, for apps with neither, a final
+(mas cannot report the sign-in, so the first install is the check: on failure the App Store opens and you sign in and retry, or skip the store apps; a failed `mas install` is retried with `mas get`, which also fetches free apps the Apple ID never downloaded; mas 7 cannot report or change the account, so every store app has an `"account"` in `apps.json` (`app_store_accounts` lists the order: `sup3r0@gmail.com` first, then the normal `dobrowolski.nowakowski@gmail.com`); the installer asks you to switch the App Store to each account in turn, confirms with you, installs that account's apps and moves on, and after any other account was used it always asks you to switch back to `dobrowolski.nowakowski@gmail.com`, even when no app of that account is left; dialogs also appear under `--automatically-approve`) and, for apps with neither, a final
 list of what to install by hand with the reason (for example Camtasia 2, whose
 license covers only version 2.x, and DxO PhotoLab 9). Apps already present in
 `/Applications` or `~/Applications` are skipped, one failed install never stops
@@ -393,6 +393,20 @@ note; copied bundles keep the old signatures, so App Store apps such as ForkLift
 may need the same Apple ID. Uses the same Homebrew rsync staging, manifest
 (`time-machine-apps.jsonl`) and undo as the other backup copies; `TEST` copies one
 plist and no app.
+
+`vendor-downloads_playbook.yml` is the very last step (after the home folders copy), asked only
+when apps and preferences are copied from a backup; it asks its questions with
+`--automatically-approve` too, since they need your choice. The vendor
+downloads are the `files/apps.json` entries marked `"vendor": true`: FileZilla, DxO PhotoLab 9,
+ON1 Photo RAW 2026, Luminar Neo, Blackmagic Camera Setup, OM Capture, Pazu StreamGet and
+PRO Speed Test (no Homebrew cask, no usable App Store listing). It lists them with their vendor
+site and whether each is installed here, with **Continue / Skip / Abort** (Abort is the default);
+install the ones you need while the dialog waits, then Continue. A checklist then shows the apps;
+those **installed here whose preferences were not copied before** are marked by default (recorded
+per app as `vendor-prefs:<name>` in `copy-status.json`); the preferences of the marked apps are copied from the backup
+(`copy_time_machine_downloads.py --vendor-prefs`, preferences only, never app bundles, never
+overwriting; manifest `time-machine-vendor-prefs.jsonl`, removed by undo like the other copies).
+An app that is not installed here, or that the backup has no preferences for, is reported in the notes.
 
 `time-machine-user-files-question_playbook.yml` asks (saved as
 `time_machine.user_files`) whether to copy user files, and
@@ -451,7 +465,7 @@ When Xcode.app is the active developer directory but its license is not accepted
 and Homebrew refuse to run. `tasks/xcode-license.yml` (run at the start of the 1Password, dotfiles,
 GitHub CLI and dev-tools steps, and after the app installs) detects this with `xcodebuild -license check`, asks first in a
 dialog (default Abort) and then runs `sudo -A xcodebuild -license
-accept` through the askpass dialog. With `--unattended` it skips the question and accepts
+accept` through the askpass dialog. With `--automatically-approve` it skips the question and accepts
 the license (the sudo password dialog still appears). Nothing changes when the license is already accepted or
 only the Command Line Tools are in use.
 
@@ -512,7 +526,7 @@ skip it when the share is unmounted and a later step still needs it (copying
 a home folder, Dia, apps, settings or user files copy not declined); when nothing needs the share, it is not requested.
 Abort stops with a short message.
 
-This checkpoint also waits with `--unattended`; Escape aborts. The script does
+This checkpoint also waits with `--automatically-approve`; Escape aborts. The script does
 not modify Finder favorites or store NAS credentials itself. Undo leaves the
 manually added favorite and SMB connection unchanged. The clipboard is replaced
 with the URL; previous clipboard contents are not stored or restored.
@@ -546,7 +560,7 @@ ends the wizard cleanly with a cancellation message, without a failed-command
 dump. No Time Machine data is changed; earlier provisioning steps remain applied.
 Real dialog rendering/terminal errors still fail with concise guidance. To
 proceed, explicitly focus Continue. This manual choice is also required with
-`--unattended`. An absent or unreadable share stops with connection instructions.
+`--automatically-approve`. An absent or unreadable share stops with connection instructions.
 Choosing **Create a new computer** opens a second dialog with the same computer
 and version list, followed by:
 
@@ -886,7 +900,7 @@ answers in aligned key/value columns (one answer per line) and the full JSON pat
 **Use previous answers** skips answered questions and continues at the first
 unanswered one. **Pick new values** deletes the JSON immediately and asks again;
 subsequent accepted answers start a new file. **Abort** preserves the file and
-ends provisioning. Abort remains the default, including with `--unattended`.
+ends provisioning. Abort remains the default, including with `--automatically-approve`.
 The manual version input retains its documented text-focus exception.
 
 Saved confirmations suppress repeat prompts; they do not bypass live readiness,

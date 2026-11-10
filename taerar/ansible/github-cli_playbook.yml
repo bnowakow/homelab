@@ -13,7 +13,7 @@
     - name: Install GitHub CLI and record newly installed formulae for rollback
       ansible.builtin.shell: |
         set -euo pipefail
-        if [[ "$UNATTENDED" != true ]]; then
+        if [[ "$AUTO_APPROVE" != true ]]; then
           unset HOMEBREW_NO_ASK
         fi
         if brew list --formula | grep -qx gh; then
@@ -30,9 +30,9 @@
         executable: /bin/bash
       environment:
         STATE_DIR: "{{ state_dir }}"
-        UNATTENDED: "{{ provision_unattended | bool | lower }}"
+        AUTO_APPROVE: "{{ provision_auto_approve | bool | lower }}"
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
-        HOMEBREW_NO_ASK: "{{ '1' if provision_unattended | bool else '' }}"
+        HOMEBREW_NO_ASK: "{{ '1' if provision_auto_approve | bool else '' }}"
         HOMEBREW_NO_AUTO_UPDATE: '1'
         HOMEBREW_NO_INSTALL_CLEANUP: '1'
         HOMEBREW_NO_INSTALL_UPGRADE: '1'
@@ -98,10 +98,10 @@
         - name: Open GitHub browser login (complete the device authorization in the browser)
           ansible.builtin.shell: >-
             gh auth login --hostname github.com --web --git-protocol https --skip-ssh-key
-            < {{ '/dev/null' if provision_unattended | bool else lookup('env', 'HOMELAB_PROVISION_TTY') | quote }}
+            < {{ '/dev/null' if provision_auto_approve | bool else lookup('env', 'HOMELAB_PROVISION_TTY') | quote }}
             > {{ lookup('env', 'HOMELAB_PROVISION_TTY') | quote }} 2>&1
           environment:
             GH_CONFIG_DIR: "{{ gh_config_dir }}"
-            GH_PROMPT_DISABLED: "{{ '1' if provision_unattended | bool else '' }}"
+            GH_PROMPT_DISABLED: "{{ '1' if provision_auto_approve | bool else '' }}"
           changed_when: true
           no_log: true

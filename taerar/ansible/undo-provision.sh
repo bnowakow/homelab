@@ -266,6 +266,7 @@ PY
   undo_copied_files "$state_dir" time-machine-user-files 'the user files copied from a backup' || return 1
   rm -rf -- "$state_dir/user-files-backup"
   undo_copied_files "$state_dir" time-machine-apps 'the apps and preferences copied from a backup' || return 1
+  undo_copied_files "$state_dir" time-machine-vendor-prefs 'the preferences of hand-installed vendor apps copied from a backup' || return 1
   undo_copied_files "$state_dir" time-machine-dia 'the Dia settings copied from a backup' || return 1
   # Homebrew rsync was installed only for that copy.
   undo_homebrew_manifest "$state_dir" time-machine-formulae formula

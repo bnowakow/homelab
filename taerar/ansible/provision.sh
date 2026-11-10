@@ -1,23 +1,23 @@
 #!/bin/bash
 # Bootstrap from master (copy and run in Terminal):
-# /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --unattended
+# /bin/bash -c "$(curl -fsSL "https://raw.githubusercontent.com/bnowakow/homelab/master/taerar/ansible/provision.sh?$(date +%s)")" -- --automatically-approve
 set -euo pipefail
 
-unattended=false
+auto_approve=false
 for argument in "$@"; do
   case "$argument" in
-    --unattended) unattended=true ;;
+    --automatically-approve) auto_approve=true ;;
     --help|-h)
-      echo "Usage: $0 [--unattended]"
-      echo 'Without --unattended, installation confirmations remain interactive.'
+      echo "Usage: $0 [--automatically-approve]"
+      echo 'Without --automatically-approve, installation confirmations remain interactive.'
       exit 0
       ;;
-    *) echo "Usage: $0 [--unattended]" >&2; exit 2 ;;
+    *) echo "Usage: $0 [--automatically-approve]" >&2; exit 2 ;;
   esac
 done
 
 # Use each installer's native confirmation controls, never a blanket yes pipe.
-if [[ "$unattended" == true ]]; then
+if [[ "$auto_approve" == true ]]; then
   export NONINTERACTIVE=1 HOMEBREW_NO_ASK=1
 else
   unset NONINTERACTIVE HOMEBREW_NO_ASK
@@ -38,7 +38,7 @@ fi
 # before cloning. This is Apple's own installer (a dialog to click Install in);
 # undo never removes the tools.
 # Ask for the sudo password once (sudo prompts for it itself; it is never
-# auto-answered, also with --unattended) and keep the authorization alive in
+# auto-answered, also with --automatically-approve) and keep the authorization alive in
 # the background while provisioning runs. Homebrew's non-interactive installer
 # and later steps (mas) need an already authorized sudo.
 sudo_keepalive_pid=""
@@ -59,7 +59,7 @@ command_line_tools_ready() {
 
 # Install the tools from the terminal with Apple's own softwareupdate, which
 # needs sudo: sudo asks for your password itself (never auto-answered, also
-# with --unattended). Returns non-zero when anything fails, so the caller falls
+# with --automatically-approve). Returns non-zero when anything fails, so the caller falls
 # back to the installer dialog.
 install_command_line_tools_with_sudo() {
   local marker=/tmp/.com.apple.dt.CommandLineTools.installondemand.in-progress label
@@ -231,6 +231,8 @@ case "$provision_location" in
   *) echo "HOMELAB_LOCATION must be local or remote, not '$provision_location' (check $env_file)." >&2; exit 2 ;;
 esac
 echo "Provisioning environment: $provision_env; location: $provision_location (NAS domain $nas_domain)"
+# Tells the backup helper which NAS address a kept attachment belongs to.
+export HOMELAB_NAS_DOMAIN="$nas_domain"
 
 # All subsequent provisioning actions belong in Ansible playbooks.
 # Ansible workers do not retain a controlling terminal; pass its device path
@@ -258,15 +260,37 @@ export HOMELAB_PROVISION_LOG ANSIBLE_LOG_PATH="$HOMELAB_PROVISION_LOG"
 HOMELAB_FAILED_APPS="$log_dir/failed-apps-$(date +%Y%m%d-%H%M%S).txt"
 ( umask 077; : > "$HOMELAB_FAILED_APPS" )
 export HOMELAB_FAILED_APPS
+# The Time Machine backup is attached once (slow over the network) and reused by
+# every copy step; the question at the end of the run decides if it stays attached.
+export HOMELAB_KEEP_BACKUP_ATTACHED=true
 echo "Logging to $HOMELAB_PROVISION_LOG"
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/terminal-ui_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\", \"provision_location\": \"$provision_location\", \"nas_domain\": \"$nas_domain\"}"
+  --extra-vars "{\"provision_auto_approve\": $auto_approve, \"provision_env\": \"$provision_env\", \"provision_location\": \"$provision_location\", \"nas_domain\": \"$nas_domain\"}"
 playbook_status=0
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/provision_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\", \"provision_location\": \"$provision_location\", \"nas_domain\": \"$nas_domain\"}" \
+  --extra-vars "{\"provision_auto_approve\": $auto_approve, \"provision_env\": \"$provision_env\", \"provision_location\": \"$provision_location\", \"nas_domain\": \"$nas_domain\"}" \
   || playbook_status=$?
+
+backup_attachment="$HOME/.homelab-provision-state/backup-attachment.json"
+if [[ -f "$backup_attachment" ]]; then
+  keep_backup=false
+  if [[ "$auto_approve" != true ]] && command -v dialog >/dev/null 2>&1; then
+    # Detach is the default; only an explicit "Keep attached" keeps it.
+    dialog_status=0
+    dialog --clear --title 'Time Machine backup' --yes-label 'Detach it' --no-label 'Keep attached' --default-button ok \
+      --yesno "The Time Machine backup is still attached read-only (attaching over the network is slow).\n\nKeep attached: a rerun of provisioning skips the slow attach. Downsides: it stays mounted until you detach it or reboot, it keeps the NAS share busy (the share cannot be ejected and the backup cannot be used for backups meanwhile), and Finder or apps can hang if the NAS goes offline.\n\nDetach it when you are done." 16 78 \
+      < "$provision_tty" > "$provision_tty" 2>&1 || dialog_status=$?
+    if [[ "$dialog_status" == 1 ]]; then keep_backup=true; fi
+  fi
+  if [[ "$keep_backup" == true ]]; then
+    echo "Time Machine backup left attached. Detach it later: python3 $repo_dir/taerar/ansible/files/copy_time_machine_downloads.py --detach"
+  else
+    echo 'Detaching the Time Machine backup...'
+    python3 "$repo_dir/taerar/ansible/files/copy_time_machine_downloads.py" --detach > /dev/null || echo 'Could not detach it; run hdiutil info and eject it.' >&2
+  fi
+fi
 
 if [[ -s "$HOMELAB_FAILED_APPS" ]]; then
   echo

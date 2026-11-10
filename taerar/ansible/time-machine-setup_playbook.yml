@@ -27,3 +27,6 @@
 
 # The slowest step comes last.
 - import_playbook: time-machine-folders_playbook.yml
+
+# Hand-installed vendor apps: list them, then copy preferences of the ones you installed.
+- import_playbook: vendor-downloads_playbook.yml
