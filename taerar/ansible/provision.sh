@@ -273,16 +273,30 @@ ansible-playbook -i localhost, -c local \
   --extra-vars "{\"provision_auto_approve\": $auto_approve, \"provision_env\": \"$provision_env\", \"provision_location\": \"$provision_location\", \"nas_domain\": \"$nas_domain\"}" \
   || playbook_status=$?
 
+# The Dock was restarted when its settings were restored, before Dropbox synced its folders,
+# so a cloud folder tile (e.g. Zrzuty ekranu) shows "?" until the Dock restarts once more.
+python3 -I "$repo_dir/taerar/ansible/files/refresh_dock_cloud_tiles.py" || true
+
 backup_attachment="$HOME/.homelab-provision-state/backup-attachment.json"
 if [[ -f "$backup_attachment" ]]; then
   keep_backup=false
-  if [[ "$auto_approve" != true ]] && command -v dialog >/dev/null 2>&1; then
-    # Detach is the default; only an explicit "Keep attached" keeps it.
+  # Always ask, also with --automatically-approve: leaving the backup attached
+  # is the user's call. "Keep attached" is the default; only an explicit "Detach it" detaches.
+  backup_question='The Time Machine backup is still attached read-only (attaching over the network is slow).
+
+Keep it attached? Keep attached (default): a rerun of provisioning skips the slow attach. Downsides: it stays mounted until you detach it or reboot, it keeps the NAS share busy (the share cannot be ejected and the backup cannot be used for backups meanwhile), and Finder or apps can hang if the NAS goes offline.'
+  if command -v dialog >/dev/null 2>&1; then
     dialog_status=0
-    dialog --clear --title 'Time Machine backup' --yes-label 'Detach it' --no-label 'Keep attached' --default-button ok \
-      --yesno "The Time Machine backup is still attached read-only (attaching over the network is slow).\n\nKeep attached: a rerun of provisioning skips the slow attach. Downsides: it stays mounted until you detach it or reboot, it keeps the NAS share busy (the share cannot be ejected and the backup cannot be used for backups meanwhile), and Finder or apps can hang if the NAS goes offline.\n\nDetach it when you are done." 16 78 \
+    dialog --clear --title 'Time Machine backup' --yes-label 'Detach it' --no-label 'Keep attached' --default-button no \
+      --yesno "${backup_question//$'\n'/\\n}" 16 78 \
       < "$provision_tty" > "$provision_tty" 2>&1 || dialog_status=$?
-    if [[ "$dialog_status" == 1 ]]; then keep_backup=true; fi
+    if [[ "$dialog_status" != 0 ]]; then keep_backup=true; fi
+  else
+    # No dialog: plain prompt; anything but an explicit "d" keeps it attached.
+    printf '%s\nDetach it now? [d = detach / Enter = keep attached] ' "$backup_question" > "$provision_tty"
+    answer=''
+    read -r answer < "$provision_tty" || true
+    case "$answer" in [dD]*) ;; *) keep_backup=true ;; esac
   fi
   if [[ "$keep_backup" == true ]]; then
     echo "Time Machine backup left attached. Detach it later: python3 $repo_dir/taerar/ansible/files/copy_time_machine_downloads.py --detach"

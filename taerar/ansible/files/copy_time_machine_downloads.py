@@ -521,7 +521,10 @@ def plan_apps(catalog, backup_home, mode, only=None, matched=None):
     if mode == "PROD" and only is None:
         for app in (a for a in apps if a.get("from_backup")):
             name = app["app"] + ".app"
-            if any((target / name).exists() for _, target in application_roots(backup_home)):
+            # An alias (another bundle name the app has had, e.g. "Luminar") already installed here counts too.
+            if any((target / folder).exists() for _, target in application_roots(backup_home)
+                   for n in [name] + [alias + ".app" for alias in app.get("aliases", [])]
+                   for folder in (n, f"{n[:-4]}/{n}")):
                 continue
             for source_root, target in application_roots(backup_home):
                 folder = source_root / name
@@ -541,8 +544,10 @@ def plan_apps(catalog, backup_home, mode, only=None, matched=None):
         # "aliases" are other bundle names the same app has had (e.g. "Pages Creator Studio").
         names = [app["app"] + ".app"] + [alias + ".app" for alias in app.get("aliases", [])]
         name = names[0]
-        backup_bundle = next((root / n for n in names for root, _ in application_roots(backup_home)
-                              if (root / n).is_dir()), None)
+        # "folder": the vendor's installer puts the app in a folder not named after it.
+        locations = lambda n: [n, f"{n[:-4]}/{n}"] + ([f"{app['folder']}/{n}"] if app.get("folder") else [])
+        backup_bundle = next((root / folder for n in names for root, _ in application_roots(backup_home)
+                              for folder in locations(n) if (root / folder).is_dir()), None)
         if backup_bundle is None:
             if only is not None:
                 notes.append(f"{app['name']}: not found in the backup, so there are no preferences to copy")
@@ -550,7 +555,8 @@ def plan_apps(catalog, backup_home, mode, only=None, matched=None):
         identifier, executable = app_bundle_info(backup_bundle)
         if not identifier:
             continue
-        here = any((target / n).exists() for n in names for _, target in application_roots(backup_home)) \
+        here = any((target / folder).exists() for n in names for _, target in application_roots(backup_home)
+                   for folder in locations(n)) \
             or any(item[0].name in names for item in bundles)
         if not here:
             if only is not None:
@@ -972,7 +978,9 @@ USER_FILE_ROOTS = [".ssh", "Library/Fonts", "Library/LaunchAgents", "Library/Ser
 # needs the apps to be closed.
 PRIVATE_DATA_ROOTS = ["Library/Keychains", "Library/Safari", "Library/Containers/com.apple.Safari",
                       "Library/Messages", "Library/Mail", "Library/Containers/com.apple.mail",
-                      "Library/Group Containers/group.com.apple.mail"]
+                      "Library/Group Containers/group.com.apple.mail",
+                      # Internet Accounts (mail, iCloud, Google ...): the account database.
+                      "Library/Accounts"]
 SIDEBAR_DIR = Path("Library/Application Support/com.apple.sharedfilelist")
 SIDEBAR_PREFIX = "com.apple.LSSharedFileList.FavoriteItems.sfl"
 

@@ -12,7 +12,7 @@
       '' if (time_machine_copy_from | default('none')) == 'unversioned'
       else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
   pre_tasks:
-    # The question was asked earlier (time-machine-folders-question_playbook.yml);
+    # The question was asked earlier (time-machine-copy-question_playbook.yml);
     # these long copies run last. The fact stays unset when the question was
     # skipped (no copy source, cancelled, or no Full Disk Access).
     - name: Skip unless home folders were chosen

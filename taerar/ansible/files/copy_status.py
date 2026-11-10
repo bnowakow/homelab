@@ -13,6 +13,11 @@ Usage:
   copy_status.py show                       print a table
   copy_status.py get STEP                   print the state (nothing if unknown)
   copy_status.py set STEP STATE [KEY=VALUE ...]
+  copy_status.py defaults BUNDLE MODE STEP=on|off ...
+                                            print "<STEP>|on|off|<status text>" per step: "off" only when the
+                                            copy finished for that bundle and mode and no later run was
+                                            interrupted or failed; interrupted/failed copies are "on";
+                                            never-copied steps use the given default
   copy_status.py done STEP BUNDLE [MODE]    print "<backup>|<completed>" when STEP finished
                                             before for that bundle (and mode), even if a later
                                             run was interrupted or failed; else nothing
@@ -90,9 +95,36 @@ def show():
         print(f"{step:<{width}}  {entry.get('state', '?'):<8}  {entry.get('updated', '')}  {' '.join(extra)}")
 
 
+def describe(entry, bundle, mode, default):
+    """(checked by default, status text) for one copy step."""
+    when = (entry or {}).get("updated", "")[:16].replace("T", " ")
+    state = (entry or {}).get("state")
+    if state == "started":
+        return True, f"interrupted {when}, copy again"
+    if state == "failed":
+        return True, f"failed {when}, copy again"
+    if state == "done":
+        if entry.get("bundle") == bundle and entry.get("mode") == mode:
+            return False, f"copied OK {when}"
+        return default, f"copied from another backup {when}"
+    if state == "skipped":
+        return default, f"skipped last time {when}"
+    return default, "not copied yet"
+
+
+def defaults(bundle, mode, steps):
+    status = read_status()
+    for item in steps:
+        step, _, default = item.rpartition("=")
+        checked, text = describe(status.get(step), bundle, mode, default != "off")
+        print(f"{step}|{'on' if checked else 'off'}|{text}")
+
+
 def main(argv):
     if argv[:1] == ["show"]:
         show()
+    elif argv[:1] == ["defaults"] and len(argv) >= 4:
+        defaults(argv[1], argv[2], argv[3:])
     elif argv[:1] == ["get"] and len(argv) == 2:
         entry = read_status().get(argv[1])
         if entry:

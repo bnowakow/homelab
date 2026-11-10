@@ -353,7 +353,7 @@ the rest, and casks plus their missing dependencies are recorded in
 `apps-casks` / `apps-formulae` first so `undo-provision.sh` removes them. App
 Store apps are recorded in `apps-mas` but left installed. In the `TEST`
 environment only one representative cask (MacPacker) and one App Store app
-(Amphetamine), marked `"test"` in the catalog, are installed and the rest of the
+(Blackmagic Disk Speed Test), marked `"test"` in the catalog, are installed and the rest of the
 plan is only printed.
 
 **Known issue: Logitech G HUB does not start on macOS 27 (Darwin 27.2).** The cask
@@ -369,6 +369,30 @@ there and match the Time Machine backup (same build 2026.7.1011216), so reinstal
 help. Logitech's download page (`https://www.logitechg.com/pl-pl/software/ghub`) offers no DMG;
 its macOS link is the same `lghub_installer.zip` the cask uses.
 
+**Resolved (2026-11-10): Blackmagic RAW Player is not an App Store app on this setup.** `mas install` failed with
+`No downloads initiated`, and the `mas get` fallback opened Apple's "Sign-In Required" sheet and ended with
+`ISErrorDomain Code=4` even after signing in. The old Mac's backup shows why: `Blackmagic RAW Player.app` lived in
+`/Applications/Blackmagic RAW/` with no `_MASReceipt`, so it came from Blackmagic's own installer. The catalog entry is now a
+vendor download with `"folder": "Blackmagic RAW"` (the app sits in a folder not named after it; the installed check in
+`install_apps.py`, `vendor-downloads_playbook.yml` and the preference copy honor `folder`). The `mas get` sheet can still appear for other free
+App Store apps this Apple ID never downloaded; the account check cannot see an expired store session.
+
+**TODO (App Store sign-in sheet during `mas get`):** if Apple's "Sign-In Required" sheet shows up again for another free
+App Store app this Apple ID never downloaded (Blackmagic RAW Player was fixed by making it a vendor download, so it is not a
+live case): (1) check whether the app is really an App Store app, as the old Mac's backup shows (no `_MASReceipt` in the bundle means
+it came from the vendor, so make it a `vendor` entry in `files/apps.json`, with `"folder"` when it installs into a folder not
+named after it); (2) otherwise sign out of the App Store and back in, then rerun; (3) otherwise warn before the `mas get` fallback in
+`files/install_apps.py` (`install_store_group`) that Apple's confirmation sheet will open and must be completed, and record such
+failures as "needs confirmation in the App Store" instead of a generic `mas exit 1`. The signed-in check
+(`ensure_store_signed_in`, reads `Accounts4.sqlite`) cannot see an expired store session, so it will not catch this.
+
+**Dock folder tiles in cloud storage.** A Dock folder tile in `~/Library/CloudStorage` (e.g. `Dropbox/Zrzuty ekranu`) shown as a
+Folder (`displayas` 1) renders as a "?" icon (it still opens); shown as a Stack (`displayas` 0) it shows previews of its files, which is what you get
+after dragging it out and back in. Restoring the Dock settings from a backup can bring the Folder style back, and the Dock is restarted
+before Dropbox has synced. `provision.sh` therefore runs `files/refresh_dock_cloud_tiles.py` after the playbooks: it sets Folder-style cloud
+tiles to Stack, then restarts the Dock once when the folder exists by then. If it does not exist yet (Dropbox not signed in or still
+syncing), it prints a note; run `killall Dock` once the folder appears.
+
 **TODO (G HUB):** wait for a G HUB build that runs on this macOS, then check
 `brew upgrade --cask logitech-g-hub` and rerun provisioning; report the crash to Logitech with
 the `.ips` reports and the macOS version; after a working build, decide whether to copy G HUB
@@ -376,16 +400,15 @@ settings from the backup (the data is under `/Library/Application Support/Logi/L
 owned, so it needs sudo through the askpass dialog) and whether `apps_playbook.yml` should skip
 or flag G HUB on macOS versions where it cannot run.
 
-`time-machine-apps-question_playbook.yml` asks (saved as `time_machine.apps`,
-with the other backup questions up front) whether to copy apps and preferences
+The combined checklist in `time-machine-copy-question_playbook.yml` asks whether to copy apps and preferences
 from the selected backup, and `time-machine-apps_playbook.yml` does it after the
 Dia step and before the final home folders copy. It copies the `from_backup` apps
 of `files/apps.json` that this Mac lacks (ForkLift, Camtasia 2, OpenEmu,
 Transmission Remote GUI, Better Dock, CoreNodeReader, megacleaner, Tailscale-package,
 Vorssaint, and the vendor-download apps FileZilla, DxO PhotoLab 9, ON1 Photo RAW 2026, Luminar Neo,
 Blackmagic Camera Setup, OM Capture, Pazu StreamGet and PRO Speed Test; an app the backup lacks is
-reported as "not found in the backup" and has to be downloaded by hand). Blackmagic RAW Player now
-comes from the App Store into `/Applications` (or `~/Applications` where they
+reported as "not found in the backup" and has to be downloaded by hand). Blackmagic RAW Player is a vendor download (the Blackmagic RAW installer puts it in
+`/Applications/Blackmagic RAW/`; its App Store listing cannot be downloaded). Copied apps go into `/Applications` (or `~/Applications` where they
 lived), and the preferences plist (`~/Library/Preferences/<bundle id>.plist`, or
 the sandbox container's copy) of every catalog app installed here. Never
 overwrites; apps that are running (for example the terminal) are skipped with a
@@ -408,8 +431,7 @@ per app as `vendor-prefs:<name>` in `copy-status.json`); the preferences of the 
 overwriting; manifest `time-machine-vendor-prefs.jsonl`, removed by undo like the other copies).
 An app that is not installed here, or that the backup has no preferences for, is reported in the notes.
 
-`time-machine-user-files-question_playbook.yml` asks (saved as
-`time_machine.user_files`) whether to copy user files, and
+The combined checklist in `time-machine-copy-question_playbook.yml` asks whether to copy user files, and
 `time-machine-user-files_playbook.yml` does it after the apps copy: `~/.ssh`
 (including private keys; the folder is set to mode 700 and agent/ControlMaster
 sockets are skipped), `~/Library/Fonts`, `~/Library/LaunchAgents` (copied but not
@@ -427,25 +449,45 @@ bookmarks may point at folders that do not exist here. `TEST` copies one small f
 `~/.gitconfig`, `~/.zshrc`, `~/.vimrc`, `~/.p10k.zsh` and `~/.zpreztorc` are not read
 from the backup: they are repository dotfiles installed by `make install-dotfiles`.
 
-`time-machine-private-data-question_playbook.yml` asks (saved as
-`time_machine.private_data`) whether to copy `~/Library/Keychains`, Safari
+The combined checklist in `time-machine-copy-question_playbook.yml` asks whether to copy `~/Library/Keychains`, Safari
 (`~/Library/Safari` and its container), Messages (`~/Library/Messages`: chat database
-and attachments) and Mail (`~/Library/Mail` and the Mail containers), and
+and attachments) Mail (`~/Library/Mail` and the Mail containers) and Internet Accounts (`~/Library/Accounts`), and
 `time-machine-private-data_playbook.yml` does it right after the user files. Safari,
 Mail and Messages must be closed (the playbook asks you to quit them and re-checks).
 It uses the same rsync staging and never overwrites: a keychain, database or Mail
 account this Mac already created is kept, so only missing files are added (for
 example the `login.keychain-db` of a fresh account stays, and a Safari that was
 already opened keeps its own `History.db`). Mail account sign-ins live in the system
-accounts database, which is not copied; add the accounts in Mail or Internet Accounts
-and the copied messages are used. Undo removes unchanged copies
+accounts database (`~/Library/Accounts/Accounts4.sqlite`). It is in the list, but a Mac
+that has finished setup already has one (it holds the Apple ID and iCloud sign-in), so
+in practice it is kept and not copied; add the other accounts in Mail or Internet
+Accounts and the copied messages are used. Undo removes unchanged copies
 (`time-machine-private-data.jsonl`). `TEST` copies one file.
+
+#### Internet Accounts (`~/Library/Accounts`): not restored from the backup
+
+Decision: the accounts database is not replaced from the backup, and deleting it on a
+set-up Mac is not supported. It holds more than Internet Accounts: the Apple ID,
+iCloud, IDMS, CloudKit, Device Locator, Find My Friends, Game Center, Messages and
+iTunes Store accounts, the CalDAV/CardDAV/IMAP/SMTP accounts, the apps' authorizations
+and references to Keychain items. Accounts4.sqlite is held open by `accountsd`.
+
+A restored copy does not give working accounts: passwords and tokens are Keychain
+items (this Mac's `login.keychain-db` is kept, see above), and the Apple ID, iCloud and
+Messages entries carry tokens issued to the old Mac. Expect sign-in prompts for all of
+them and a possibly broken iCloud state. Add the accounts again in System Settings >
+Internet Accounts instead.
+
+Not implemented (a possible future option, with undo): sign out of iCloud, quit Mail,
+Calendar, Contacts and Messages, move `~/Library/Accounts` aside (saved for undo), copy
+the folder from the backup, then restart. Even then re-authentication is expected, and
+the only account it would help with is a plain IMAP/SMTP one.
 
 The settings merge below also covers the `com.apple.Music`, `com.apple.mail`,
 `com.apple.iCal` and `com.apple.Notes` preferences (account setup and the mail or
 message data itself are not copied).
 
-`time-machine-settings-question_playbook.yml` asks (saved as `time_machine.settings`)
+The combined checklist in `time-machine-copy-question_playbook.yml` asks
 whether to merge Finder and system settings from the backup;
 `time-machine-settings_playbook.yml` does it after the apps copy. For these domains:
 global preferences, Finder, desktop services, Dock, Spaces, WindowManager,
@@ -655,31 +697,27 @@ questions are in the saved answers (`time-machine-choices.json`, `time_machine.*
 python3 taerar/ansible/files/copy_status.py show
 ```
 
-Before `apps`, `user-files`, `private-data`, `system-settings` and each home folder (`folder:<Name>`) run, a rerun asks **Skip it /
-Copy again / Abort** (`tasks/skip-if-already-copied.yml`) when that step finished before (`done`, or `started`/`failed` after an earlier finish) for the same
-bundle and mode. Skipping avoids the slow network attach but does not pick up a newer backup;
-nothing is saved, so it is asked on every run. A step that never finished, or is `skipped`, is never
-offered for skipping, and Abort (the default) or Esc stops provisioning, and no terminal or a dialog error means Copy again. A restarted step keeps its old finish as `last_completed`. While the bundle attaches, a reminder is printed every
+One checklist (`time-machine-copy-question_playbook.yml`, asked up front after the wizard) lists every copy: the home
+folders, `apps`, `user-files`, `private-data` and `system-settings`, each with its last status. A copy that finished for the same bundle and
+mode is unchecked; one that was interrupted (`started`) or failed is checked; one never made (or `skipped`) uses its default
+(Desktop, `go` and `Public` off, everything else on). Nothing is saved: the defaults follow `copy-status.json` on every run, and Abort (the default)
+or Esc stops provisioning. The older per-step `time_machine.apps`, `.settings`, `.user_files`, `.private_data` and `.folders` answers are ignored. While the bundle attaches, a reminder is printed every
 two minutes.
 
 ### Copying home folders from the selected backup
 
 After the wizard, when a backup to copy data from was selected (not **Do not
-copy data**), `time-machine-folders-question_playbook.yml` shows a checklist (Space
-toggles) of home folders to copy from the **latest** backup inside that bundle (for
+copy data**), `time-machine-copy-question_playbook.yml` shows the one checklist (Space
+toggles) described above. Its home folders are copied from the **latest** backup inside that bundle (for
 example `Taerar 7.5.sparsebundle`): Documents, Downloads, Movies, Music,
-Pictures, `code` and `Sync` are selected by default; Desktop, `go` and `Public` are
-offered unselected. Music includes the Music app library. Abort is the default;
-the selection (a list, empty means skip) is saved as `time_machine.folders` and
-reused. The older `time_machine.downloads` answer is ignored.
-It is cleared when any earlier Time Machine answer changes.
+Pictures, `code`, `Sync`, Desktop, `go` and `Public`. Music includes the Music app library.
 
 **The copy is the very last provisioning step**, because it can take a long
 time. All the questions (this one, then the apps, user files, settings and Dia
 questions) are asked up front, right after the wizard, so you can answer them and
 walk away; everything else is set up first, and `time-machine-folders_playbook.yml`
 copies the selected folders at the end, one after another
-(`tasks/copy-backup-folder.yml`, which first offers to skip a folder already copied, then `copy-backup-folder-run.yml`), each with its own rsync progress line and
+(`tasks/copy-backup-folder.yml`, then `copy-backup-folder-run.yml`), each with its own rsync progress line and
 manifest. If the
 question is skipped (no copy source, cancelled, or no Full Disk Access) or
 answered `skip`, the final step does nothing.
@@ -704,8 +742,10 @@ edited on top, and a rerun reports `already applied`.
 
 `files/copy_time_machine_downloads.py` then:
 
-1. Attaches the bundle read-only with `hdiutil` to a temporary mount point and
-   always detaches it again. If the volume is encrypted and stays locked, it
+1. Attaches the bundle read-only with `hdiutil` to a temporary mount point. provision.sh keeps it attached
+   between the copy steps (attaching over the network is slow) and asks at the end of
+   every run, also with `--automatically-approve`, whether to detach it; Keep attached is
+   the default, and `copy_time_machine_downloads.py --detach` detaches it later. If the volume is encrypted and stays locked, it
    attaches without mounting, runs `diskutil apfs unlockVolume`, which asks for
    the Time Machine backup password in the terminal (never stored), and mounts it
    read-only. If Time Machine is currently using the bundle, attaching fails;

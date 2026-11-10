@@ -29,10 +29,12 @@ def run(cmd, tty, check=False, capture=False, env=None):
         stream.close()
 
 
-def app_store_account():
-    """The Apple ID the App Store is signed in with, or None when unknown. mas 7 cannot
+def app_store_state():
+    """(readable, account): the Apple ID the App Store is signed in with. mas 7 cannot
     tell, so read the active iTunesStore account's username (read-only) from the macOS
-    Accounts database; it needs Full Disk Access for the terminal, otherwise None."""
+    Accounts database. It needs Full Disk Access for the terminal: when the database
+    cannot be read, readable is False (signed in or not is unknown); when it can be read
+    and has no active account, account is None (signed out)."""
     database = Path.home() / "Library" / "Accounts" / "Accounts4.sqlite"
     try:
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
@@ -43,8 +45,13 @@ def app_store_account():
         finally:
             connection.close()
     except sqlite3.Error:
-        return None
-    return row[0].lower() if row and row[0] else None
+        return False, None
+    return True, (row[0].lower() if row and row[0] else None)
+
+
+def app_store_account():
+    """The signed-in Apple ID, or None when signed out or unknown."""
+    return app_store_state()[1]
 
 
 def already_signed_in(account):
@@ -127,7 +134,12 @@ def main():
 
     def present(app):
         bundles = [app["app"] + ".app"] + [alias + ".app" for alias in app.get("aliases", [])]
-        if any((root / bundle).exists() for bundle in bundles for root in (Path("/Applications"), home / "Applications")):
+        # Some vendors install into a folder named after the app (/Applications/ON1 Photo RAW 2026/ON1 Photo RAW 2026.app).
+        # "folder": the vendor's installer puts the app in a folder not named after it
+        # (/Applications/Blackmagic RAW/Blackmagic RAW Player.app).
+        if any((root / bundle).exists() or (root / bundle[:-4] / bundle).exists()
+               or (app.get("folder") and (root / app["folder"] / bundle).exists())
+               for bundle in bundles for root in (Path("/Applications"), home / "Applications")):
             return True
         if "cask" in app and app["cask"] in installed_casks:
             return True
@@ -180,6 +192,15 @@ def main():
         groups = [(account, [a for a in store if a.get("account", normal) == account]) for account in accounts]
         groups = [(account, group) for account, group in groups if group]
         signed_in_as = None   # the account the user confirmed last (None: not switched)
+        # A signed-out App Store makes `mas` pop up Apple's own "Sign-In Required" sheet
+        # in the middle of the installs, so ask for the sign-in once, first. Only when the
+        # Accounts database is readable (Full Disk Access) and shows no account; otherwise
+        # the first failed install is still the sign-in test (install_store_group).
+        if groups and not ensure_store_signed_in(tty, groups[0][0], [a["name"] for _, g in groups for a in g]):
+            for _, group in groups:
+                for a in group:
+                    record_failure(summary, f"{a['name']} (mas {a['mas']}, App Store not signed in)")
+            groups = []
         for number, (account, group) in enumerate(groups):
             if already_signed_in(account):
                 note(tty, f"The App Store is already signed in as {account}; not asking to switch.")
@@ -230,6 +251,30 @@ def install_store_group(group, summary, tty):
                 record_failure(summary, f"{app['name']} (mas {app['mas']}, App Store not signed in)")
                 skipped = True
                 break
+
+
+def ensure_store_signed_in(tty, account, names):
+    """When the App Store is known to be signed out, open it and ask the user to sign in
+    before the first mas call. Returns False when the user chose to skip the App Store apps.
+    Unknown (database unreadable) and signed-in both return True. The dialog appears with
+    --automatically-approve too; Skip is the default."""
+    while True:
+        readable, current = app_store_state()
+        if not readable or current:
+            return True
+        run(["open", "-a", "App Store"], tty)
+        text = ("The App Store is not signed in, so installing App Store apps would stop at Apple's "
+                "sign-in sheet.\n\nIn the App Store app that just opened, sign in (Store > Sign In)"
+                + (f" with {account}" if account else "")
+                + ", then choose 'I signed in'.\n\nApps: " + ", ".join(names))
+        if not shutil_which("dialog"):
+            print(text, file=sys.stderr)
+            return False
+        result = run(["dialog", "--clear", "--cr-wrap", "--title", "App Store sign-in",
+                      "--default-button", "cancel", "--yes-label", "I signed in",
+                      "--no-label", "Skip App Store apps", "--yesno", text, "16", "76"], tty)
+        if result.returncode != 0:
+            return False
 
 
 def confirm_account_switch(tty, account, names):

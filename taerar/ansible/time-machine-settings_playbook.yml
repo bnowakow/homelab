@@ -12,7 +12,7 @@
       '' if (time_machine_copy_from | default('none')) == 'unversioned'
       else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
   pre_tasks:
-    # The question was asked earlier (time-machine-settings-question_playbook.yml);
+    # The question was asked earlier (time-machine-copy-question_playbook.yml);
     # this long copy runs last. The fact stays unset when the question was skipped
     # (no copy source, cancelled, or no Full Disk Access).
     - name: Skip unless copying settings was chosen
@@ -21,19 +21,6 @@
         (time_machine_saved_cancelled | default(false)) or
         (time_machine_copy_settings | default('skip')) != 'copy'
 
-    # Offer to skip when this step already finished for the same backup bundle
-    # (tasks/skip-if-already-copied.yml); nothing is saved, so it is asked on every run.
-    - name: Offer to skip Finder and system settings that were already copied
-      ansible.builtin.include_tasks: tasks/skip-if-already-copied.yml
-      vars:
-        copied_step: system-settings
-        copied_label: "Finder and system settings"
-        copied_bundle: "{{ settings_source_bundle | basename }}"
-        copied_mode: "{{ settings_env }}"
-
-    - name: Skip Finder and system settings that were already copied
-      ansible.builtin.meta: end_play
-      when: copied_skip | default(false) | bool
   tasks:
     - name: Merge Finder and system settings from the latest backup
       ansible.builtin.shell: >-

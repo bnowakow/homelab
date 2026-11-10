@@ -12,28 +12,15 @@
       '' if (time_machine_copy_from | default('none')) == 'unversioned'
       else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
   pre_tasks:
-    # The question was asked earlier (time-machine-private-data-question_playbook.yml);
+    # The question was asked earlier (time-machine-copy-question_playbook.yml);
     # this long copy runs last. The fact stays unset when the question was skipped
     # (no copy source, cancelled, or no Full Disk Access).
     - name: Skip unless copying private data was chosen
       ansible.builtin.meta: end_play
       when: >-
         (time_machine_saved_cancelled | default(false)) or
-        (time_machine_copy_files | default('skip')) != 'copy'
+        (time_machine_copy_private_data | default('skip')) != 'copy'
 
-    # Offer to skip when this step already finished for the same backup bundle
-    # (tasks/skip-if-already-copied.yml); nothing is saved, so it is asked on every run.
-    - name: Offer to skip private data that were already copied
-      ansible.builtin.include_tasks: tasks/skip-if-already-copied.yml
-      vars:
-        copied_step: private-data
-        copied_label: "private data"
-        copied_bundle: "{{ files_source_bundle | basename }}"
-        copied_mode: "{{ files_env }}"
-
-    - name: Skip private data that were already copied
-      ansible.builtin.meta: end_play
-      when: copied_skip | default(false) | bool
   tasks:
     - name: Forget any earlier skip choice
       ansible.builtin.set_fact:
@@ -49,7 +36,7 @@
         - {process: Safari, name: Safari}
         - {process: Mail, name: Mail}
         - {process: Messages, name: Messages}
-      when: time_machine_copy_files == 'copy' and not (quit_skip_copy | default(false))
+      when: time_machine_copy_private_data == 'copy' and not (quit_skip_copy | default(false))
 
     # "Skip this copy" in a quit dialog: leave the whole private-data copy out for
     # this run (the saved answer is kept, so it is asked again next time).
@@ -70,7 +57,7 @@
 
     - name: Install Homebrew rsync for copying files from backups
       ansible.builtin.include_tasks: tasks/install-rsync.yml
-      when: time_machine_copy_files == 'copy'
+      when: time_machine_copy_private_data == 'copy'
 
     - name: Copy private data from the latest backup without overwriting files
       ansible.builtin.shell: >-
@@ -93,7 +80,7 @@
       # was already shown in the terminal above.
       changed_when: files_copy.rc == 0 and (files_copy.stdout | from_json).copied > 0
       failed_when: false
-      when: time_machine_copy_files == 'copy'
+      when: time_machine_copy_private_data == 'copy'
 
     - name: Stop with a short explanation when copying private data failed
       ansible.builtin.fail:
@@ -102,7 +89,7 @@
           | default('see the message printed above this task.', true) }}
           The backup was only read and nothing was overwritten. Earlier steps and
           your saved answers remain; fix the problem and rerun provisioning.
-      when: time_machine_copy_files == 'copy' and files_copy.rc != 0
+      when: time_machine_copy_private_data == 'copy' and files_copy.rc != 0
 
     - name: Report the private data copy
       vars:
@@ -112,4 +99,4 @@
           {{ files_env }}: copied {{ files_summary.copied }} private data file(s) from backup {{ files_summary.backup }};
           skipped {{ files_summary.skipped_existing }} existing. Keychain, Safari, Mail and Messages
           files that this Mac already had were kept. Undo removes unchanged copies.
-      when: time_machine_copy_files == 'copy'
+      when: time_machine_copy_private_data == 'copy'

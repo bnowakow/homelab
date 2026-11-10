@@ -1,0 +1,123 @@
+- name: Ask what to copy from the selected backup (one checklist for every copy)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    time_machine_volume: /Volumes/time-machine
+    # PROD copies everything chosen; TEST copies one small piece of each.
+    copy_env: "{{ provision_env | default('PROD') }}"
+    copy_source_bundle: >-
+      {{ time_machine_volume }}/{{ time_machine_computer | default('') }}{{
+      '' if (time_machine_copy_from | default('none')) == 'unversioned'
+      else ' ' + (time_machine_copy_from | default('none') | string) }}.sparsebundle
+    # Dialog tag -> copy_status.py step. Folders first, then the smaller copies.
+    copy_folder_names: [Documents, Downloads, Movies, Music, Pictures, Desktop, code, Sync, go, Public]
+    copy_folder_defaults: {Documents: 'on', Downloads: 'on', Movies: 'on', Music: 'on', Pictures: 'on', Desktop: 'off', code: 'on', Sync: 'on', go: 'off', Public: 'off'}
+  pre_tasks:
+    # Asked only after the wizard has a copy source; never for cancelled or
+    # TODO paths, and never when the user chose to start with an empty backup.
+    - name: Skip unless a backup to copy data from was selected
+      ansible.builtin.meta: end_play
+      when: >-
+        (time_machine_action | default('cancelled')) != 'create' or
+        (time_machine_copy_from | default(none)) in [none, 'none'] or
+        (time_machine_saved_cancelled | default(false))
+
+    # The user chose "Continue without" in full-disk-access_playbook.yml.
+    - name: Explain that nothing is copied without Full Disk Access
+      ansible.builtin.debug:
+        msg: >-
+          Skipped copying from the backup: {{ full_disk_access_app | default('the terminal app') }}
+          has no Full Disk Access. Enable it, quit and reopen the app, then rerun
+          provisioning to copy. Your saved answers are unchanged.
+      when: not (provision_full_disk_access | default(true) | bool)
+
+    - name: Skip every backup copy without Full Disk Access
+      ansible.builtin.meta: end_play
+      when: not (provision_full_disk_access | default(true) | bool)
+  tasks:
+    - name: Validate the provisioning environment
+      ansible.builtin.assert:
+        that: copy_env in ['PROD', 'TEST']
+        fail_msg: HOMELAB_PROVISION_ENV must be PROD or TEST.
+
+    # Status of every copy from copy-status.json: a copy that finished for this backup is
+    # unchecked; an interrupted or failed one is checked; never-copied ones use the default.
+    # Nothing is saved: the defaults follow the latest status on every run.
+    - name: Look up the status of every copy
+      ansible.builtin.command:
+        argv: >-
+          {{ [ansible_playbook_python, playbook_dir + '/files/copy_status.py', 'defaults',
+              copy_source_bundle | basename, copy_env]
+             + (copy_folder_names | map('regex_replace', '^', 'folder:') | list
+                | zip(copy_folder_names | map('extract', copy_folder_defaults) | list)
+                | map('join', '=') | list)
+             + ['apps=on', 'user-files=on', 'private-data=on', 'system-settings=on'] }}
+      environment:
+        PYTHONDONTWRITEBYTECODE: '1'
+      register: copy_status_lines
+      changed_when: false
+
+    - name: Ask what to copy from the selected backup
+      ansible.builtin.shell: |
+        items=()
+        while IFS='|' read -r step state text; do
+          [ -n "$step" ] || continue
+          case "$step" in
+            folder:*) name="${step#folder:}"; label="~/$name" ;;
+            apps) name=apps; label='Apps and their preferences' ;;
+            user-files) name=user-files; label='User files (ssh, fonts, login items, dotfiles, sidebar)' ;;
+            private-data) name=private-data; label='Private data (keychains, Safari, Messages, Mail)' ;;
+            system-settings) name=settings; label='Finder and system settings' ;;
+          esac
+          items+=("$name" "$label - $text" "$state")
+        done <<< "$STATUS"
+        if [ "$COPY_ENV" = TEST ]; then
+          scope='TEST environment: only the first file of each selected item is copied.'
+        else
+          scope='Everything selected is copied.'
+        fi
+        message="Select what to copy from the latest backup in $SOURCE_NAME into this Mac (Space toggles, Enter confirms).\n\nChecked by default: copies that were never made and copies that were interrupted or failed. Copies that already finished are unchecked. $scope Existing files are never overwritten and the backup is only read. Apps, user files, private data and settings run first; the home folders run last because they take the longest, and an interrupted folder copy resumes when you rerun provisioning.\n\nThe terminal running provisioning needs Full Disk Access (System Settings > Privacy & Security > Full Disk Access)."
+        dialog --clear --stdout --separate-output --cr-wrap --title 'Copy from backup' \
+          --ok-label Continue --cancel-label Abort --default-button cancel \
+          --checklist "$message" 30 100 15 \
+          "${items[@]}" \
+          < "$PROVISION_TTY" 2> "$PROVISION_TTY"
+      args:
+        executable: /bin/bash
+      environment:
+        STATUS: "{{ copy_status_lines.stdout }}"
+        COPY_ENV: "{{ copy_env }}"
+        SOURCE_NAME: "{{ copy_source_bundle | basename | regex_replace('\\.sparsebundle$', '') }}"
+        PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
+        TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
+        DIALOG_ERROR: '70'
+        DIALOG_CANCEL: '1'
+        DIALOG_ESC: '255'
+      register: copy_answer
+      changed_when: false
+      failed_when: false
+
+    - name: Stop after Abort or a dialog failure
+      ansible.builtin.fail:
+        msg: >-
+          {{ 'Choosing what to copy cancelled. Nothing was copied; earlier provisioning steps remain applied.'
+             if copy_answer.rc in [1, 255] else
+             'Could not show the copy dialog. Run provisioning from an interactive Terminal.' }}
+      when: copy_answer.rc != 0
+
+    - name: Validate the choice
+      ansible.builtin.assert:
+        that: >-
+          copy_answer.stdout_lines | difference(copy_folder_names + ['apps', 'user-files', 'private-data', 'settings']) | length == 0
+        fail_msg: An unknown item was selected.
+
+    # The later copy playbooks read these facts; "skip" leaves a copy out of this run.
+    - name: Decide what to copy
+      ansible.builtin.set_fact:
+        time_machine_copy_folders: "{{ copy_answer.stdout_lines | intersect(copy_folder_names) | list }}"
+        time_machine_copy_apps: "{{ 'copy' if 'apps' in copy_answer.stdout_lines else 'skip' }}"
+        time_machine_copy_files: "{{ 'copy' if 'user-files' in copy_answer.stdout_lines else 'skip' }}"
+        time_machine_copy_private_data: "{{ 'copy' if 'private-data' in copy_answer.stdout_lines else 'skip' }}"
+        time_machine_copy_settings: "{{ 'copy' if 'settings' in copy_answer.stdout_lines else 'skip' }}"

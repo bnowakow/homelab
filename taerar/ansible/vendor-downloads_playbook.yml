@@ -44,7 +44,9 @@
                 match = re.search(r"download from (.+)$", app["manual"])
                 out.append({"name": app["name"],
                             "where": match.group(1) if match else "the vendor's website",
-                            "installed": any(os.path.isdir(f"{root}/{app['app']}.app") for root in roots),
+                            "installed": any(os.path.isdir(f"{root}/{b}.app") or os.path.isdir(f"{root}/{b}/{b}.app")
+                                                or os.path.isdir(f"{root}/{app.get('folder', b)}/{b}.app")
+                                                for root in roots for b in [app["app"]] + app.get("aliases", [])),
                             # preferences were copied for this app from this backup bundle in an earlier run
                             "prefs_copied": (history.get("vendor-prefs:" + app["name"]) or {}).get("state") == "done"
                                             and history["vendor-prefs:" + app["name"]].get("bundle") == sys.argv[3]})

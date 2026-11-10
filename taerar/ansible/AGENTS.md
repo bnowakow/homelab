@@ -174,9 +174,9 @@
   provision_location and nas_domain; never hard-code *.localdomain.bnowakowski.pl in a playbook,
   build NAS addresses from nas_domain (remote uses the *.tailscale.bnowakowski.pl twin).
 - After the wizard, if a copy source was chosen, ask with a dialog checklist
-  (saved as the list time_machine.folders; Documents, Downloads, Movies, Music,
+  (not saved; Documents, Downloads, Movies, Music,
   Pictures, code, Sync preselected, other home folders offered unselected) which home folders
-  to copy from the latest backup in that bundle. Attach read-only and always detach; unlock encrypted volumes only
+  to copy from the latest backup in that bundle. Attach read-only and keep it attached between copy steps; provision.sh asks at the end of every run (also with --automatically-approve) whether to detach it, with Keep attached as the default; unlock encrypted volumes only
   through an interactive password prompt and never store it. Never overwrite
   existing files; check free space first. Record each created file/folder in
   the state directory before creating it; undo removes only unchanged copies and
@@ -187,8 +187,8 @@
   image). Unmount the snapshot before detaching; fall back to diskutil eject.
 - Ask all backup questions up front, right after the wizard, and run the slow
   home folders copy as the very last provisioning step (question in
-  time-machine-folders-question_playbook.yml, one resumable rsync copy per folder
-  in time-machine-folders_playbook.yml via tasks/copy-backup-folder.yml (skip offer) and copy-backup-folder-run.yml with its
+  time-machine-copy-question_playbook.yml, one resumable rsync copy per folder
+  in time-machine-folders_playbook.yml via tasks/copy-backup-folder.yml and copy-backup-folder-run.yml with its
   own manifest time-machine-folder-<Name>.jsonl; skipped when the list is empty).
   Try to mount the Time Machine share automatically (open smb://...) before
   falling back to the manual Finder dialog; never handle the NAS password.
@@ -221,7 +221,7 @@
   time-machine-user-files (.ssh, Fonts, LaunchAgents not loaded, Services,
   Scripts, non-repository dotfiles such as .zsh_history/.config/.kube, Finder
   sidebar replaced after saving the original),
-  time-machine-private-data (Keychains, Safari, Messages, Mail; asks to quit
+  time-machine-private-data (Keychains, Safari, Messages, Mail, Internet Accounts; asks to quit
   Safari/Mail/Messages first, never overwrites) and
   time-machine-settings (Finder, Dock, system, Music, Mail domains merged with
   `defaults export/import`, originals saved for undo). Use
@@ -293,10 +293,10 @@
   ~/.homelab-provision-state/copy-status.json through files/copy_status.py (written by
   copy_time_machine_downloads.py itself); new copy steps must go through that helper, and undo
   removes the file.
-- Before apps, user-files, private-data, system-settings and each home folder copy, tasks/skip-if-already-copied.yml
-  offers "Skip it / Copy again / Abort" (default Abort) only when copy-status.json shows an earlier finish
-  (`done`, or `last_completed` kept across a restart) for the same bundle and mode (copy_status.py done STEP BUNDLE MODE); never save the
-  answer, Abort/Esc stop provisioning; treat no TTY or dialog errors as Copy again. New one-shot copy steps should use it.
+- All backup copies (home folders, apps, user-files, private-data, system-settings) are chosen in ONE dialog checklist
+  (time-machine-copy-question_playbook.yml). Defaults come from copy-status.json via `copy_status.py defaults BUNDLE MODE STEP=on|off ...`:
+  finished for the same bundle and mode -> unchecked; started (interrupted) or failed -> checked; never copied or skipped -> the
+  step's default. Never save the answer; Abort/Esc stop provisioning. New copy steps should be added to that checklist.
 - vendor-downloads_playbook.yml runs last (after the folders copy), only with a backup copy source
   and apps copy chosen, also with --automatically-approve (it still needs the user's choices): list the apps marked "vendor": true in apps.json,
   ask Continue/Skip/Abort (default Abort), then a checklist preselecting only installed apps whose preferences were not copied from this bundle before (vendor-prefs:<name> in copy-status.json); copy only
