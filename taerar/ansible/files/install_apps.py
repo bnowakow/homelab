@@ -28,6 +28,48 @@ def run(cmd, tty, check=False, capture=False, env=None):
         stream.close()
 
 
+def note(tty, message):
+    """Show a line on the terminal and in the provision log (mas prints its own
+    errors straight to the terminal without saying which app they belong to)."""
+    for target in (tty, os.environ.get("HOMELAB_PROVISION_LOG")):
+        if not target:
+            continue
+        try:
+            with open(target, "ab", buffering=0) as stream:
+                stream.write((message + "\n").encode())
+        except OSError:
+            pass
+
+
+def record_failure(summary, label):
+    summary["failed"].append(label)
+    path = os.environ.get("HOMELAB_FAILED_APPS")
+    if path:
+        with open(path, "a") as stream:
+            stream.write(label + "\n")
+
+
+def run_logged(cmd, tty):
+    """Like run(), but also appends the command's output to the run log
+    (HOMELAB_PROVISION_LOG) so a failed install can be diagnosed afterwards."""
+    log_path = os.environ.get("HOMELAB_PROVISION_LOG")
+    if not log_path:
+        return run(cmd, tty)
+    stream = open(tty, "r+b", buffering=0)
+    try:
+        with open(log_path, "ab") as log:
+            log.write(f"$ {' '.join(cmd)}\n".encode())
+            process = subprocess.Popen(cmd, stdin=stream, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            for chunk in iter(lambda: process.stdout.read1(4096), b""):
+                stream.write(chunk)
+                log.write(chunk.replace(b"\r", b"\n"))
+            code = process.wait()
+            log.write(f"(exit {code})\n".encode())
+            return subprocess.CompletedProcess(cmd, code)
+    finally:
+        stream.close()
+
+
 def merge_manifest(path, lines):
     lines = {line for line in lines if line}
     if path.exists():
@@ -92,7 +134,11 @@ def main():
         for app in casks:
             print(f"Installing {app['name']} (cask {app['cask']})", file=sys.stderr, flush=True)
             result = run(["brew", "install", "--cask", app["cask"]], tty, env=brew_env)
-            (summary["installed"] if result.returncode == 0 else summary["failed"]).append(app["name"])
+            if result.returncode == 0:
+                summary["installed"].append(app["name"])
+            else:
+                note(tty, f"FAILED: {app['name']} (cask {app['cask']}): brew exit {result.returncode}")
+                record_failure(summary, f"{app['name']} (cask {app['cask']})")
     if store:
         merge_manifest(state / "apps-mas", [str(a["mas"]) for a in store])
         # mas 7 cannot report or change the App Store account and needs root to
@@ -114,7 +160,8 @@ def main():
         for number, (account, group) in enumerate(groups):
             if number > 0 or account != normal:
                 if not confirm_account_switch(tty, account, [a["name"] for a in group]):
-                    summary["failed"] += [a["name"] + f" (App Store account {account} not used)" for a in group]
+                    for a in group:
+                        record_failure(summary, f"{a['name']} (mas {a['mas']}, App Store account {account} not used)")
                     continue
                 signed_in_as = account
             install_store_group(group, summary, tty)
@@ -134,26 +181,27 @@ def install_store_group(group, summary, tty):
     skipped = False
     for app in group:
         if skipped:
-            summary["failed"].append(app["name"] + " (App Store not signed in)")
+            record_failure(summary, f"{app['name']} (mas {app['mas']}, App Store not signed in)")
             continue
         while True:
             print(f"Installing {app['name']} from the App Store", file=sys.stderr, flush=True)
-            result = run(["sudo", "-A", "mas", "install", str(app["mas"])], tty)
+            result = run_logged(["sudo", "-A", "mas", "install", str(app["mas"])], tty)
             if result.returncode != 0:
                 # install only works for apps this Apple ID already got; a free app
                 # it never downloaded needs `get` ("No downloads initiated").
-                print(f"mas install failed for {app['name']}; trying mas get (free apps)", file=sys.stderr, flush=True)
-                result = run(["sudo", "-A", "mas", "get", str(app["mas"])], tty)
+                note(tty, f"mas install failed for {app['name']} (ADAM ID {app['mas']}); trying mas get (free apps)")
+                result = run_logged(["sudo", "-A", "mas", "get", str(app["mas"])], tty)
             if result.returncode == 0:
                 signed_in = True
                 summary["installed"].append(app["name"])
                 break
+            note(tty, f"FAILED: {app['name']} (ADAM ID {app['mas']}): mas exit {result.returncode}")
             if signed_in or os.environ.get("UNATTENDED") == "true":
-                summary["failed"].append(app["name"])
+                record_failure(summary, f"{app['name']} (mas {app['mas']})")
                 skipped = not signed_in
                 break
             if not retry_after_sign_in(tty):
-                summary["failed"].append(app["name"] + " (App Store not signed in)")
+                record_failure(summary, f"{app['name']} (mas {app['mas']}, App Store not signed in)")
                 skipped = True
                 break
 

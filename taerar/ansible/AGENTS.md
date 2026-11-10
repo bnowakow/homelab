@@ -170,6 +170,9 @@
   Git-ignored taerar/ansible/.env (parsed as text, never sourced), else PROD.
   Pass it to playbooks as provision_env; keep .env.sample at PROD. TEST must
   keep data copies minimal (e.g. one file) for small test machines.
+- HOMELAB_LOCATION is local (default) or remote, read like HOMELAB_PROVISION_ENV. Playbooks get
+  provision_location and nas_domain; never hard-code *.localdomain.bnowakowski.pl in a playbook,
+  build NAS addresses from nas_domain (remote uses the *.tailscale.bnowakowski.pl twin).
 - After the wizard, if a copy source was chosen, ask with a dialog checklist
   (saved as the list time_machine.folders; Documents, Downloads, Movies, Music,
   Pictures, code, Sync preselected, other home folders offered unselected) which home folders
@@ -185,7 +188,7 @@
 - Ask all backup questions up front, right after the wizard, and run the slow
   home folders copy as the very last provisioning step (question in
   time-machine-folders-question_playbook.yml, one resumable rsync copy per folder
-  in time-machine-folders_playbook.yml via tasks/copy-backup-folder.yml with its
+  in time-machine-folders_playbook.yml via tasks/copy-backup-folder.yml (skip offer) and copy-backup-folder-run.yml with its
   own manifest time-machine-folder-<Name>.jsonl; skipped when the list is empty).
   Try to mount the Time Machine share automatically (open smb://...) before
   falling back to the manual Finder dialog; never handle the NAS password.
@@ -290,3 +293,13 @@
   ~/.homelab-provision-state/copy-status.json through files/copy_status.py (written by
   copy_time_machine_downloads.py itself); new copy steps must go through that helper, and undo
   removes the file.
+- Before apps, user-files, private-data, system-settings and each home folder copy, tasks/skip-if-already-copied.yml
+  offers "Skip it / Copy again / Abort" (default Abort) only when copy-status.json shows an earlier finish
+  (`done`, or `last_completed` kept across a restart) for the same bundle and mode (copy_status.py done STEP BUNDLE MODE); never save the
+  answer, Abort/Esc stop provisioning; treat no TTY or dialog errors as Copy again. New one-shot copy steps should use it.
+- provision.sh exports HOMELAB_PROVISION_LOG and ANSIBLE_LOG_PATH (one file per run in
+  ~/Library/Logs/homelab-provision, symlink provision-latest.log). Copy tasks that redirect
+  helper stderr to the terminal must also append it: `2> >(tee "$PROVISION_TTY" | tr '\r' '\n' |
+  tee -a "${HOMELAB_PROVISION_LOG:-/dev/null}" >&2)`. Never log passwords or dialog input.
+- The Dia extension listing is cached in ~/.homelab-provision-state/dia-backup-extensions.json
+  (keyed by the backup bundle) so reruns skip the backup attach; undo removes the file.

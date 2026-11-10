@@ -28,6 +28,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 SKIPPED_NAMES = {".DS_Store", ".localized"}
 # Keep headroom so copying cannot fill the disk completely.
@@ -116,6 +118,26 @@ def image_entities(output):
     if not entities:
         raise CopyError("hdiutil attached the backup but reported no device.")
     return entities
+
+
+class attach_heartbeat:
+    """Print a reminder every few minutes while the (possibly very slow) attach runs."""
+
+    def __init__(self, name, interval=120):
+        self.name, self.interval = name, interval
+        self.stop, self.started = threading.Event(), time.monotonic()
+
+    def run(self):
+        while not self.stop.wait(self.interval):
+            minutes = int((time.monotonic() - self.started) // 60)
+            progress(f"Still attaching {self.name} ({minutes} min). If this never ends, check that the NAS "
+                     "is reachable and that no backup is running, then press Ctrl-C and rerun.")
+
+    def __enter__(self):
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def __exit__(self, *exc):
+        self.stop.set()
 
 
 def attach(bundle, mountpoint):
@@ -1019,7 +1041,8 @@ def main():
     repos = {}
     try:
         progress(f"Attaching {bundle.name} read-only (this can take a while over the network)...")
-        whole, devices, volume = attach(bundle, mountpoint)
+        with attach_heartbeat(bundle.name):
+            whole, devices, volume = attach(bundle, mountpoint)
         backup = latest_backup(mountpoint, volume, snapshot_mountpoint)
         user = os.environ.get("USER") or Path.home().name
         progress(f"Latest backup: {backup.name}")

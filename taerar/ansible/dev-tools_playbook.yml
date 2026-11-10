@@ -26,6 +26,7 @@
           'wget|wget||formula'
           'curl|curl||formula'
           'git|git||formula'
+          'gnu-sed|gnu-sed||formula'
           'ffmpeg|ffmpeg||formula'
           'ggshield|ggshield||formula'
           'mole|mole||formula'

@@ -13,6 +13,9 @@ Usage:
   copy_status.py show                       print a table
   copy_status.py get STEP                   print the state (nothing if unknown)
   copy_status.py set STEP STATE [KEY=VALUE ...]
+  copy_status.py done STEP BUNDLE [MODE]    print "<backup>|<completed>" when STEP finished
+                                            before for that bundle (and mode), even if a later
+                                            run was interrupted or failed; else nothing
 Importable: record(step, state, **detail), read_status().
 """
 import json
@@ -49,6 +52,11 @@ def record(step, state, **detail):
     entry["updated"] = now
     if state == "started":
         entry["started"] = now
+        # A restarted step is not complete now, but its last finish stays known so an
+        # interrupted rerun does not hide that the copy was done before.
+        if entry.get("completed"):
+            entry["last_completed"] = entry.pop("completed")
+            entry["last_backup"] = entry.get("backup")
     elif state == "done":
         entry["completed"] = now
     steps[step] = entry
@@ -89,6 +97,13 @@ def main(argv):
         entry = read_status().get(argv[1])
         if entry:
             print(entry.get("state", ""))
+    elif argv[:1] == ["done"] and len(argv) in (3, 4):
+        entry = read_status().get(argv[1]) or {}
+        finished = entry.get("completed") or entry.get("last_completed")
+        if (finished and entry.get("state") != "skipped" and entry.get("bundle") == argv[2]
+                and (len(argv) == 3 or entry.get("mode") == argv[3])):
+            backup = entry.get("backup") if entry.get("completed") else entry.get("last_backup")
+            print(f"{backup or '?'}|{finished}")
     elif argv[:1] == ["set"] and len(argv) >= 3:
         detail = dict(item.split("=", 1) for item in argv[3:] if "=" in item)
         record(argv[1], argv[2], **detail)

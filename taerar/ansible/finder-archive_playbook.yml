@@ -40,7 +40,7 @@
     - name: Copy the archive address and wait until Finder has mounted the share
       ansible.builtin.shell: |
         set -euo pipefail
-        address='smb://nas.localdomain.bnowakowski.pl/time-machine'
+        address="smb://nas.$NAS_DOMAIN/time-machine"
         note=
         # A saved confirmation never replaces this live check. Compare captured
         # output: with pipefail, mount | grep -q can fail when grep exits early.
@@ -76,6 +76,7 @@
         PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
         TERM: "{{ lookup('env', 'TERM') or 'xterm-256color' }}"
         VOLUME: "{{ time_machine_volume }}"
+        NAS_DOMAIN: "{{ nas_domain | default('localdomain.bnowakowski.pl') }}"
       changed_when: false
       failed_when: false
       register: finder_connection_answer

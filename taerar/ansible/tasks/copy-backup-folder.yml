@@ -1,54 +1,16 @@
-# Copy ~/<folder_name> from the selected backup. Variables: folder_name,
-# folder_index (0-based), time_machine_copy_folders, folders_env,
-# folders_source_bundle, rsync_install. rsync prints its progress to the
-# terminal; the helper names the folder in its first progress line.
-- name: "Copy ~/{{ folder_name }} ({{ folder_index | int + 1 }} of {{ time_machine_copy_folders | length }}) from the latest backup without overwriting files"
-  ansible.builtin.shell: >-
-    {{ ansible_playbook_python | quote }}
-    {{ (playbook_dir + '/files/copy_time_machine_downloads.py') | quote }}
-    --folder {{ folder_name | quote }}
-    {{ folders_source_bundle | quote }}
-    {{ (lookup('env', 'HOME') + '/' + folder_name) | quote }}
-    {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-folder-' + folder_name + '.jsonl') | quote }}
-    {{ folders_env | quote }}
-    < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
-  args:
-    executable: /bin/bash
-  environment:
-    PROVISION_TTY: "{{ lookup('env', 'HOMELAB_PROVISION_TTY') }}"
-    PYTHONDONTWRITEBYTECODE: '1'
-    HOMELAB_RSYNC: "{{ (rsync_install.stdout_lines | select('match', '^rsync=') | first)[6:] }}"
-  register: folder_copy
-  # The helper prints its JSON summary only on success; its error message was
-  # already shown in the terminal above.
-  changed_when: folder_copy.rc == 0 and (folder_copy.stdout | from_json).copied > 0
-  failed_when: false
+# One home folder from the selected backup. Variables: folder_name, folder_index
+# (0-based), time_machine_copy_folders, folders_env, folders_source_bundle, rsync_install.
+# When ~/<folder_name> was already copied from this bundle, ask whether to skip it
+# (tasks/skip-if-already-copied.yml) before the slow backup attach; the copy itself is
+# in copy-backup-folder-run.yml.
+- name: "Offer to skip ~/{{ folder_name }} when it was already copied"
+  ansible.builtin.include_tasks: skip-if-already-copied.yml
+  vars:
+    copied_step: "folder:{{ folder_name }}"
+    copied_label: "~/{{ folder_name }}"
+    copied_bundle: "{{ folders_source_bundle | basename }}"
+    copied_mode: "{{ folders_env }}"
 
-- name: "Stop with a short explanation when copying ~/{{ folder_name }} failed"
-  ansible.builtin.fail:
-    msg: >-
-      Copying ~/{{ folder_name }} failed: {{ (folder_copy.stderr_lines | default([]) | last)
-      | default('see the message printed above this task.', true) }}
-      The backup was only read and nothing was overwritten. Earlier steps and your
-      saved answers remain; fix the problem and rerun provisioning, which resumes
-      the copy where it stopped.
-  when: folder_copy.rc != 0
-
-- name: "Report the ~/{{ folder_name }} copy"
-  ansible.builtin.debug:
-    msg: >-
-      {{ folders_env }}: ~/{{ folder_name }}: copied {{ (folder_copy.stdout | from_json).copied }} item(s)
-      from backup {{ (folder_copy.stdout | from_json).backup }}; skipped
-      {{ (folder_copy.stdout | from_json).skipped_existing }} existing item(s).
-      Undo removes only the copied items that are still unchanged.
-
-# ~/code only: repositories that already exist here were not copied over; their
-# uncommitted changes from the backup were applied as patches (or saved).
-- name: "Report the repositories of ~/{{ folder_name }} that already existed here"
-  ansible.builtin.debug:
-    msg: >-
-      {{ item.repo }}: uncommitted changes from the backup: {{ item.status }}
-      ({{ item.untracked }} untracked file(s) copied{{ '; ' ~ item.stashes ~ ' stash(es) in the backup were not copied' if item.stashes else '' }}){{ '; patch: ' ~ item.patch if item.patch is defined else '' }}
-  loop: "{{ (folder_copy.stdout | from_json).repos | default([]) }}"
-  loop_control:
-    label: "{{ item.repo }}"
+- name: "Copy ~/{{ folder_name }} ({{ folder_index | int + 1 }} of {{ time_machine_copy_folders | length }})"
+  ansible.builtin.include_tasks: copy-backup-folder-run.yml
+  when: not (copied_skip | default(false) | bool)

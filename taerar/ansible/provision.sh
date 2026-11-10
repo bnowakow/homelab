@@ -206,11 +206,14 @@ ansible-playbook --version
 # An exported HOMELAB_PROVISION_ENV wins over .env. The file is parsed as
 # KEY=VALUE text and never sourced.
 env_file="$repo_dir/taerar/ansible/.env"
-if [[ -z "${HOMELAB_PROVISION_ENV:-}" && -f "$env_file" ]]; then
+if [[ -f "$env_file" ]]; then
   while IFS= read -r line || [[ -n "$line" ]]; do
     line=${line%$'\r'}
-    if [[ "$line" =~ ^[[:space:]]*HOMELAB_PROVISION_ENV[[:space:]]*=[[:space:]]*[\"\']?([A-Za-z]*)[\"\']?[[:space:]]*$ ]]; then
+    if [[ -z "${HOMELAB_PROVISION_ENV:-}" && "$line" =~ ^[[:space:]]*HOMELAB_PROVISION_ENV[[:space:]]*=[[:space:]]*[\"\']?([A-Za-z]*)[\"\']?[[:space:]]*$ ]]; then
       HOMELAB_PROVISION_ENV=${BASH_REMATCH[1]}
+    fi
+    if [[ -z "${HOMELAB_LOCATION:-}" && "$line" =~ ^[[:space:]]*HOMELAB_LOCATION[[:space:]]*=[[:space:]]*[\"\']?([A-Za-z]*)[\"\']?[[:space:]]*$ ]]; then
+      HOMELAB_LOCATION=${BASH_REMATCH[1]}
     fi
   done < "$env_file"
 fi
@@ -219,7 +222,15 @@ case "$provision_env" in
   PROD|TEST) ;;
   *) echo "HOMELAB_PROVISION_ENV must be PROD or TEST, not '$provision_env' (check $env_file)." >&2; exit 2 ;;
 esac
-echo "Provisioning environment: $provision_env"
+# local (default): on the home network. remote: away from it, over Tailscale; every
+# *.localdomain.bnowakowski.pl address becomes its *.tailscale.bnowakowski.pl twin.
+provision_location=${HOMELAB_LOCATION:-local}
+case "$provision_location" in
+  local) nas_domain=localdomain.bnowakowski.pl ;;
+  remote) nas_domain=tailscale.bnowakowski.pl ;;
+  *) echo "HOMELAB_LOCATION must be local or remote, not '$provision_location' (check $env_file)." >&2; exit 2 ;;
+esac
+echo "Provisioning environment: $provision_env; location: $provision_location (NAS domain $nas_domain)"
 
 # All subsequent provisioning actions belong in Ansible playbooks.
 # Ansible workers do not retain a controlling terminal; pass its device path
@@ -232,9 +243,35 @@ if [[ -z "$terminal_name" || "$terminal_name" == '??' || ! -c "$provision_tty" ]
   exit 1
 fi
 export HOMELAB_PROVISION_TTY="$provision_tty"
+
+# One log per run in ~/Library/Logs/homelab-provision (newest: provision-latest.log).
+# Ansible writes everything it prints there (tasks, results, errors); the copy
+# helpers append their own messages and rsync progress. Nothing is rotated or
+# deleted automatically; rotate with newsyslog/logrotate when the logs grow.
+log_dir="$HOME/Library/Logs/homelab-provision"
+( umask 077; mkdir -p "$log_dir" )
+HOMELAB_PROVISION_LOG="$log_dir/provision-$(date +%Y%m%d-%H%M%S).log"
+( umask 077; : > "$HOMELAB_PROVISION_LOG" )
+ln -sfn "$HOMELAB_PROVISION_LOG" "$log_dir/provision-latest.log"
+export HOMELAB_PROVISION_LOG ANSIBLE_LOG_PATH="$HOMELAB_PROVISION_LOG"
+# Apps that failed to install are appended here and listed once the run ends.
+HOMELAB_FAILED_APPS="$log_dir/failed-apps-$(date +%Y%m%d-%H%M%S).txt"
+( umask 077; : > "$HOMELAB_FAILED_APPS" )
+export HOMELAB_FAILED_APPS
+echo "Logging to $HOMELAB_PROVISION_LOG"
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/terminal-ui_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\"}"
+  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\", \"provision_location\": \"$provision_location\", \"nas_domain\": \"$nas_domain\"}"
+playbook_status=0
 ansible-playbook -i localhost, -c local \
   "$repo_dir/taerar/ansible/provision_playbook.yml" \
-  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\"}"
+  --extra-vars "{\"provision_unattended\": $unattended, \"provision_env\": \"$provision_env\", \"provision_location\": \"$provision_location\", \"nas_domain\": \"$nas_domain\"}" \
+  || playbook_status=$?
+
+if [[ -s "$HOMELAB_FAILED_APPS" ]]; then
+  echo
+  echo "Apps that failed to install ($(wc -l < "$HOMELAB_FAILED_APPS" | tr -d ' ')):"
+  sed 's/^/  - /' "$HOMELAB_FAILED_APPS"
+  echo "List saved in $HOMELAB_FAILED_APPS; details in $HOMELAB_PROVISION_LOG"
+fi
+exit "$playbook_status"

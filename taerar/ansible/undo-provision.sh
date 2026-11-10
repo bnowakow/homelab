@@ -275,6 +275,7 @@ PY
   # Reverse the final provisioning step before removing its dependencies.
   rm -f -- "$repo_dir/taerar/ansible/time-machine-choices.json"
   rm -f -- "$state_dir/copy-status.json"
+  rm -f -- "$state_dir/dia-backup-extensions.json"
 
   # Catalog apps were installed after SDKMAN. Casks are removed; App Store apps
   # and app data stay (uninstall them manually; the ids are in apps-mas).

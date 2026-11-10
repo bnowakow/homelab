@@ -211,7 +211,7 @@
         {{ lookup('env', 'HOME') | quote }}
         {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-dia.jsonl') | quote }}
         {{ dia_env | quote }}
-        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" | tr '\r' '\n' | tee -a "${HOMELAB_PROVISION_LOG:-/dev/null}" >&2)
       args:
         executable: /bin/bash
       environment:
@@ -244,6 +244,19 @@
           files that are still unchanged.
       when: time_machine_copy_dia == 'copy'
 
+    # The extension list of a backup does not change, so it is kept after the
+    # first listing and a rerun does not attach the backup again. Delete
+    # ~/.homelab-provision-state/dia-backup-extensions.json to list it afresh.
+    - name: Reuse the extension list of this backup from an earlier run
+      ansible.builtin.set_fact:
+        dia_ext_cache: >-
+          {{ (lookup('ansible.builtin.file', lookup('env', 'HOME') + '/.homelab-provision-state/dia-backup-extensions.json', errors='ignore') or '{}') | from_json }}
+      when: time_machine_dia_extensions == 'open' and time_machine_copy_dia != 'copy'
+
+    - name: Note whether the cached extension list can be used
+      ansible.builtin.set_fact:
+        dia_ext_cached: "{{ (dia_ext_cache | default({})).bundle | default('') == dia_source_bundle and (dia_ext_cache.extensions is defined) }}"
+
     # Needs the backup only for its extension list; nothing is copied.
     - name: List the extensions installed in Dia on the backup
       ansible.builtin.shell: >-
@@ -251,7 +264,7 @@
         {{ (playbook_dir + '/files/copy_time_machine_downloads.py') | quote }}
         --dia-extensions
         {{ dia_source_bundle | quote }}
-        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" | tr '\r' '\n' | tee -a "${HOMELAB_PROVISION_LOG:-/dev/null}" >&2)
       args:
         executable: /bin/bash
       environment:
@@ -260,7 +273,14 @@
       register: dia_ext_list
       changed_when: false
       failed_when: false
-      when: time_machine_dia_extensions == 'open' and time_machine_copy_dia != 'copy'
+      when: time_machine_dia_extensions == 'open' and time_machine_copy_dia != 'copy' and not dia_ext_cached
+
+    - name: Keep the extension list of this backup for reruns
+      ansible.builtin.copy:
+        dest: "{{ lookup('env', 'HOME') }}/.homelab-provision-state/dia-backup-extensions.json"
+        content: "{{ {'bundle': dia_source_bundle, 'extensions': (dia_ext_list.stdout | from_json).extensions} | to_json }}"
+        mode: '0600'
+      when: time_machine_dia_extensions == 'open' and time_machine_copy_dia != 'copy' and not dia_ext_cached
 
     - name: Stop with a short explanation when listing the extensions failed
       ansible.builtin.fail:
@@ -268,7 +288,7 @@
           Listing the Dia extensions failed: {{ (dia_ext_list.stderr_lines | default([]) | last)
           | default('see the message printed above this task.', true) }}
           The backup was only read. Fix the problem and rerun provisioning.
-      when: time_machine_dia_extensions == 'open' and time_machine_copy_dia != 'copy' and dia_ext_list.rc != 0
+      when: time_machine_dia_extensions == 'open' and time_machine_copy_dia != 'copy' and not dia_ext_cached and dia_ext_list.rc != 0
 
     - name: Find the extensions this Dia already has
       ansible.builtin.command:
@@ -294,6 +314,7 @@
       ansible.builtin.set_fact:
         dia_backup_extensions: >-
           {{ (dia_copy.stdout | from_json).extensions if time_machine_copy_dia == 'copy'
+             else dia_ext_cache.extensions if dia_ext_cached
              else (dia_ext_list.stdout | from_json).extensions }}
       when: time_machine_dia_extensions == 'open'
 

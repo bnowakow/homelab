@@ -20,6 +20,20 @@
       when: >-
         (time_machine_saved_cancelled | default(false)) or
         (time_machine_copy_files | default('skip')) != 'copy'
+
+    # Offer to skip when this step already finished for the same backup bundle
+    # (tasks/skip-if-already-copied.yml); nothing is saved, so it is asked on every run.
+    - name: Offer to skip private data that were already copied
+      ansible.builtin.include_tasks: tasks/skip-if-already-copied.yml
+      vars:
+        copied_step: private-data
+        copied_label: "private data"
+        copied_bundle: "{{ files_source_bundle | basename }}"
+        copied_mode: "{{ files_env }}"
+
+    - name: Skip private data that were already copied
+      ansible.builtin.meta: end_play
+      when: copied_skip | default(false) | bool
   tasks:
     - name: Forget any earlier skip choice
       ansible.builtin.set_fact:
@@ -67,7 +81,7 @@
         {{ lookup('env', 'HOME') | quote }}
         {{ (lookup('env', 'HOME') + '/.homelab-provision-state/time-machine-private-data.jsonl') | quote }}
         {{ files_env | quote }}
-        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" >&2)
+        < "$PROVISION_TTY" 2> >(tee "$PROVISION_TTY" | tr '\r' '\n' | tee -a "${HOMELAB_PROVISION_LOG:-/dev/null}" >&2)
       args:
         executable: /bin/bash
       environment:

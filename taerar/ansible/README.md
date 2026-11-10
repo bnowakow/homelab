@@ -79,6 +79,19 @@ Local playbooks explicitly use `ansible_playbook_python`, the interpreter runnin
 Ansible, rather than discovering `/usr/bin/python3`. No separate Python manager
 or additional Python installation is required for these playbooks.
 
+## Logs
+
+Every `provision.sh` run writes one log, `~/Library/Logs/homelab-provision/provision-YYYYmmdd-HHMMSS.log`
+(mode 0600; `provision-latest.log` points at the newest). It holds everything Ansible
+prints (tasks, results, errors, the recap) plus the messages and rsync progress of the Time
+Machine copy helpers. The bootstrap part before Ansible starts (Xcode tools, Homebrew, Ansible
+install) and the terminal dialogs themselves are not logged. Logs are never rotated or deleted
+automatically, and undo keeps them; rotate them with `newsyslog` or `logrotate` when they grow.
+
+The extension list read from a Time Machine backup for Dia is kept in
+`~/.homelab-provision-state/dia-backup-extensions.json`, so a rerun does not attach the backup
+again just to list it; delete that file to list it afresh.
+
 ## Undoing provisioning during testing
 
 Use a JSON object with `--keep` to select what survives undo:
@@ -369,7 +382,10 @@ from the selected backup, and `time-machine-apps_playbook.yml` does it after the
 Dia step and before the final home folders copy. It copies the `from_backup` apps
 of `files/apps.json` that this Mac lacks (ForkLift, Camtasia 2, OpenEmu,
 Transmission Remote GUI, Better Dock, CoreNodeReader, megacleaner, Tailscale-package,
-Vorssaint) into `/Applications` (or `~/Applications` where they
+Vorssaint, and the vendor-download apps FileZilla, DxO PhotoLab 9, ON1 Photo RAW 2026, Luminar Neo,
+Blackmagic Camera Setup, OM Capture, Pazu StreamGet and PRO Speed Test; an app the backup lacks is
+reported as "not found in the backup" and has to be downloaded by hand). Blackmagic RAW Player now
+comes from the App Store into `/Applications` (or `~/Applications` where they
 lived), and the preferences plist (`~/Library/Preferences/<bundle id>.plist`, or
 the sandbox container's copy) of every catalog app installed here. Never
 overwrites; apps that are running (for example the terminal) are skipped with a
@@ -441,7 +457,7 @@ only the Command Line Tools are in use.
 
 `dev-tools_playbook.yml`, which runs right after `make-dependencies_playbook.yml`
 (below), installs with Homebrew, when missing: SDKMAN (`sdkman/tap/sdkman-cli`),
-screen, wget, curl, git (Homebrew's, which `.zshrc` puts ahead of Apple's `/usr/bin/git`), ffmpeg, ggshield, mole, mtr, node, ollama, pipx, pyenv,
+screen, wget, curl, gnu-sed (installed as `gsed`; the BSD `sed` in `/usr/bin` is untouched), git (Homebrew's, which `.zshrc` puts ahead of Apple's `/usr/bin/git`), ffmpeg, ggshield, mole, mtr, node, ollama, pipx, pyenv,
 pyenv-virtualenv, the current `python`, readline, ruby, sshpass, tree, yt-dlp, ansible, dialog and the
 casks rar and znotch (`zkondor/dist/znotch`). Homebrew 7 refuses untrusted taps,
 so only the SDKMAN formula and the znotch cask are trusted, with
@@ -473,7 +489,8 @@ installation. Undo removes those packages before restoring dotfiles and origin,
 preserving packages that existed beforehand. Package upgrades are not rolled back.
 
 After installing the tools, `finder-archive_playbook.yml` copies
-`smb://nas.localdomain.bnowakowski.pl/time-machine` to the clipboard and displays a
+`smb://nas.localdomain.bnowakowski.pl/time-machine` (`smb://nas.tailscale.bnowakowski.pl/time-machine`
+when `HOMELAB_LOCATION=remote`, see Environment below) to the clipboard and displays a
 dialog with these manual steps:
 
 1. Open Finder.
@@ -624,6 +641,13 @@ questions are in the saved answers (`time-machine-choices.json`, `time_machine.*
 python3 taerar/ansible/files/copy_status.py show
 ```
 
+Before `apps`, `user-files`, `private-data`, `system-settings` and each home folder (`folder:<Name>`) run, a rerun asks **Skip it /
+Copy again / Abort** (`tasks/skip-if-already-copied.yml`) when that step finished before (`done`, or `started`/`failed` after an earlier finish) for the same
+bundle and mode. Skipping avoids the slow network attach but does not pick up a newer backup;
+nothing is saved, so it is asked on every run. A step that never finished, or is `skipped`, is never
+offered for skipping, and Abort (the default) or Esc stops provisioning, and no terminal or a dialog error means Copy again. A restarted step keeps its old finish as `last_completed`. While the bundle attaches, a reminder is printed every
+two minutes.
+
 ### Copying home folders from the selected backup
 
 After the wizard, when a backup to copy data from was selected (not **Do not
@@ -641,7 +665,7 @@ time. All the questions (this one, then the apps, user files, settings and Dia
 questions) are asked up front, right after the wizard, so you can answer them and
 walk away; everything else is set up first, and `time-machine-folders_playbook.yml`
 copies the selected folders at the end, one after another
-(`tasks/copy-backup-folder.yml`), each with its own rsync progress line and
+(`tasks/copy-backup-folder.yml`, which first offers to skip a folder already copied, then `copy-backup-folder-run.yml`), each with its own rsync progress line and
 manifest. If the
 question is skipped (no copy source, cancelled, or no Full Disk Access) or
 answered `skip`, the final step does nothing.
@@ -724,6 +748,12 @@ home folders copy with a message instead of failing at the end. Access is
 checked live on every run and never saved. The Time Machine share must
 be connected in Finder (a reused Finder confirmation does not reconnect it).
 Failures stop with the helper's message, keep saved answers, and can be rerun.
+
+**Location:** `HOMELAB_LOCATION` is `local` (default, on the home network) or `remote` (away from it,
+for example when the home internet is down). It is read like `HOMELAB_PROVISION_ENV` below (exported
+variable, otherwise `.env`) and passed to playbooks as `provision_location` and `nas_domain`
+(`localdomain.bnowakowski.pl` or `tailscale.bnowakowski.pl`). `remote` makes every NAS address use the
+Tailscale name, so Tailscale must be connected. `../mount-nas-via-sshfs.sh` follows it too.
 
 **Environment:** `HOMELAB_PROVISION_ENV` selects `PROD` (default) or `TEST`.
 `PROD` copies the selected folders and Dia's configuration. `TEST` copies only the
