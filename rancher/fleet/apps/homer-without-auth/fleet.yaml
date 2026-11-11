@@ -7,7 +7,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/homer
-  version: 16.2.0
+  version: 16.2.1
   releaseName: homer-without-auth
   waitForJobs: true
   valuesFiles:
