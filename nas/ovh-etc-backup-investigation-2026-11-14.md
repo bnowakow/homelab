@@ -42,4 +42,7 @@ Verify afterwards: `/var/log/ovh-etc-backup.log` exists, a new dated archive is 
 
 - 2026-11-14, first attempt: `ansible-playbook ovh-etc-backup-cron_playbook.yml -K` (no `-i`) did nothing. Ansible found no inventory, so `ovh.bnowakowski.pl` did not match and the play was skipped ("no hosts matched", empty recap). The host is defined in `inventory/ovh.yml`, so the playbook needs `-i inventory/ovh.yml`.
 - 2026-11-14 10:50 CET, check on OVH after that attempt: still not applied. `/usr/local/sbin/ovh-etc-backup` and `/var/log/ovh-etc-backup.log` are missing, `sup`'s crontab still has the old `sudo` line, and the newest archive is still `etc-2026-11-10_06-55.tar.gz`.
-- Pending: rerun with `-i inventory/ovh.yml`, then record the `PLAY RECAP` and the post-run verification here.
+- 2026-11-14 ~10:51 CET, rerun with `-i inventory/ovh.yml -K`: `ok=12 changed=4 failed=0`. Changed tasks: root-owned script install, root cron entry, removal of the old `sup` cron line, and the missed backup run.
+- Verified on OVH right after: `/usr/local/sbin/ovh-etc-backup` exists (root, 0700), `sup`'s crontab no longer has the `etc-backup.sh` line, `etc-2026-11-14_10-51.tar.gz` was created (10.9 MB), and the Zabbix script returns `0`.
+- `/var/log/ovh-etc-backup.log` does not exist yet. The playbook's catch-up run calls the script directly, without the cron redirect, so the file will only appear after the first scheduled run.
+- Still to confirm: after the 00:05 run on 2026-11-15, check that `etc-2026-11-15_00-05.tar.gz` exists and `/var/log/ovh-etc-backup.log` is created without errors.
