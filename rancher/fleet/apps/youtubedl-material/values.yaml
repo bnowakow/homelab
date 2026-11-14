@@ -3,6 +3,17 @@ persistence:
     enabled: true
     existingClaim: youtubedl-material-appdata-longhorn-rwo
     mountPath: /app/appdata
+  # Node-local scratch for the standalone Python (too big for the 256Mi
+  # appdata PVC); re-installed by the install-python init container whenever
+  # the pod is recreated.
+  python:
+    enabled: true
+    type: emptyDir
+    mountPath: /opt/python
+    targetSelector:
+      main:
+        main: {}
+        install-python: {}
   audio:
     enabled: true
     mountPath: /app/audio
@@ -37,8 +48,46 @@ workload:
     replicas: 1
     strategy: Recreate
     podSpec:
+      initContainers:
+        # The image is Ubuntu 22.04 with Python 3.10 and upstream has not
+        # released a newer one, but yt-dlp (which the app re-downloads on every
+        # release) now requires Python 3.11+. Install a standalone Python into
+        # an emptyDir and put it first on PATH; yt-dlp's
+        # "#!/usr/bin/env python3" then picks it up. A failed download is
+        # logged but does not stop the app (yt-dlp then fails as before).
+        install-python:
+          enabled: true
+          type: init
+          imageSelector: image
+          command:
+            - /bin/bash
+            - -c
+          args:
+            - |
+              set -u
+              py=/opt/python
+              if "$py/bin/python3" -c 'import sys; sys.exit(sys.version_info < (3, 11))' 2>/dev/null; then
+                echo "Python for yt-dlp already installed: $("$py/bin/python3" --version)"
+                exit 0
+              fi
+              url='https://github.com/astral-sh/python-build-standalone/releases/download/20261110/cpython-3.12.16%2B20261110-x86_64-unknown-linux-gnu-install_only.tar.gz'
+              sha256=c2f87d4b4e8db3abddb0f116c6ccfc503d0cbdbb9ee8faacddad1b679ec12e99
+              tgz=/tmp/python.tar.gz
+              if curl -fsSL --retry 3 -o "$tgz" "$url" \
+                  && echo "$sha256  $tgz" | sha256sum -c - \
+                  && tar -xzf "$tgz" -C "$py" --strip-components=1 \
+                  && "$py/bin/python3" --version; then
+                echo "Installed Python for yt-dlp: $("$py/bin/python3" --version)"
+              else
+                echo "WARNING: could not install Python 3.12 for yt-dlp; downloads will fail" >&2
+                find "$py" -mindepth 1 -delete 2>/dev/null
+              fi
+              rm -f "$tgz"
+              exit 0
       containers:
         main:
+          env:
+            PATH: /opt/python/bin:/usr/local/nvm/versions/node/v16.14.2/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
           fixedEnv:
             PUID: '568'
           probes:
