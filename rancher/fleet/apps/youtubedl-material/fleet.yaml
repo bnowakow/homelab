@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/youtubedl-material
-  version: 17.2.3
+  version: 17.2.4
   releaseName: youtubedl-material
   waitForJobs: true
   valuesFiles:

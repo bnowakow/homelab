@@ -132,7 +132,7 @@
     "storageClassName": "longhorn-rwo-2replicas",
     "resources": {
       "requests": {
-        "storage": "256Mi"
+        "storage": "1Gi"
       }
     }
   }
