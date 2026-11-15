@@ -8,10 +8,18 @@ spec:
     dashboard:
       enabled: true
     ports:
+      # Traefik binds host ports 80/443 itself. Do not also expose them on the
+      # LoadBalancer Service: k3s ServiceLB would start svclb pods that take the
+      # same host ports first and leave Traefik Pending ("didn't have free
+      # ports"). Chart 40.1.x exposes web/websecure by default, so say no.
       web:
         hostPort: 80
+        expose:
+          default: false
       websecure:
         hostPort: 443
+        expose:
+          default: false
       traefik:
         expose:
           default: true
