@@ -44,12 +44,13 @@
   gather_facts: false
   tasks:
     - name: Ask before upgrading NordVPN and rebooting this host
-      ansible.builtin.pause:
-        prompt: >-
-          {{ lookup('ansible.builtin.env', 'APT_UPGRADE_HOST_COLOR') }}{{ inventory_hostname }}{{ lookup('ansible.builtin.env', 'APT_UPGRADE_HOST_RESET') }} will upgrade NordVPN.
+      ansible.builtin.include_tasks: apt-upgrade-confirm_tasks.yml
+      vars:
+        confirm_fact: nordvpn_reboot_confirmation
+        confirm_message: >-
+          {{ inventory_hostname }} will upgrade NordVPN.
           The VPN kill switch may disconnect Ansible during the upgrade.
-          May apt upgrade this host and immediately reboot it on success? [yes/no]
-      register: nordvpn_reboot_confirmation
+          May apt upgrade this host and immediately reboot it on success?
       when:
         - nordvpn_upgrade_planned
         - not ansible_check_mode
@@ -295,12 +296,13 @@
         - ansible_check_mode
 
     - name: Ask whether this host may be rebooted
-      ansible.builtin.pause:
-        prompt: >-
-          {{ lookup('ansible.builtin.env', 'APT_UPGRADE_HOST_COLOR') }}{{ inventory_hostname }}{{ lookup('ansible.builtin.env', 'APT_UPGRADE_HOST_RESET') }} needs a reboot to activate its newer kernel
+      ansible.builtin.include_tasks: apt-upgrade-confirm_tasks.yml
+      vars:
+        confirm_fact: reboot_confirmation
+        confirm_message: >-
+          {{ inventory_hostname }} needs a reboot to activate its newer kernel
           (kernel check returned {{ kernel_status_before_reboot.stdout | trim | default('no output', true) }}).
-          Continue with reboot on this host? [yes/no]
-      register: reboot_confirmation
+          Continue with reboot on this host?
       when:
         - kernel_check_available
         - not ansible_check_mode

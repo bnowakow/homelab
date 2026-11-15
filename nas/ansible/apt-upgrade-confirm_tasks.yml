@@ -1,0 +1,40 @@
+# Yes/no confirmation shared by apt-upgrade_playbook.yml.
+#
+# Inputs:  confirm_message (text) and confirm_fact (name of the fact to set).
+# Result:  fact <confirm_fact> = {user_input: 'yes' | 'no'}, shaped like the
+#          register of ansible.builtin.pause so callers can test .user_input.
+#
+# Uses a whiptail (ncurses) dialog on the controller's terminal with "No" as
+# the default button. Falls back to a plain pause prompt when whiptail or a
+# controlling terminal is unavailable; an empty answer there also means no.
+- name: Ask with an ncurses dialog, defaulting to No
+  ansible.builtin.shell: |
+    if ! command -v whiptail >/dev/null 2>&1 || ! { : </dev/tty; } 2>/dev/null; then
+      exit 3
+    fi
+    whiptail --title "apt-upgrade" --defaultno --yes-button Yes --no-button No \
+      --yesno "$CONFIRM_MESSAGE" 12 72 </dev/tty >/dev/tty 2>/dev/tty
+  args:
+    executable: /bin/bash
+  environment:
+    CONFIRM_MESSAGE: "{{ confirm_message }}"
+  delegate_to: localhost
+  become: false
+  register: confirm_dialog
+  changed_when: false
+  failed_when: false
+
+- name: Fall back to a text prompt when no dialog is available
+  ansible.builtin.pause:
+    prompt: "{{ confirm_message }} [yes/no, default no]"
+  register: confirm_pause
+  when: confirm_dialog.rc == 3
+
+- name: Record the answer
+  ansible.builtin.set_fact:
+    "{{ confirm_fact }}":
+      user_input: >-
+        {{ 'yes' if (confirm_dialog.rc == 0 or
+                     (confirm_dialog.rc == 3 and
+                      (confirm_pause.user_input | default('') | trim | lower) in ['yes', 'y']))
+           else 'no' }}
