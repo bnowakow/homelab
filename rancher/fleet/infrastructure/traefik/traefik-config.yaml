@@ -27,6 +27,9 @@ spec:
       access:
         enabled: true
     deployment:
+      # One Traefik per node: hostPort 80/443 means each pod serves only its own
+      # node's IP, and DNS points at both proxmox3 and proxmox2-old.
+      replicas: 2
       podAnnotations:
         prometheus.io/port: "8082"
         prometheus.io/scrape: "true"
