@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/radarr
-  version: 29.1.8
+  version: 29.1.9
   releaseName: radarr
   waitForJobs: true
   valuesFiles:

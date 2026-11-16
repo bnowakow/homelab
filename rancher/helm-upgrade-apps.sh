@@ -29,6 +29,8 @@ dry_run=0
 # enough time to finish that initialization; ROLLOUT_TIMEOUT or the CLI option
 # can still override this per run.
 rollout_timeout="${ROLLOUT_TIMEOUT:-10m}"
+# SSH (root, key auth) to cluster nodes for node-side repairs: root@<node>.<domain>
+node_ssh_domain="${NODE_SSH_DOMAIN:-localdomain.bnowakowski.pl}"
 exit_status=0
 total_discovered_count=0
 excluded_count=0
@@ -2280,6 +2282,50 @@ EOF_HOSTS
   return 0
 }
 
+rollout_timeout_seconds() {
+  local t="$rollout_timeout" n
+  n="${t%[smh]}"
+  case "$n" in ''|*[!0-9]*) echo 600; return ;; esac
+  case "$t" in
+    *h) echo $((n * 3600)) ;;
+    *m) echo $((n * 60)) ;;
+    *) echo "$n" ;;
+  esac
+}
+
+# Prints "pod<TAB>volume" lines for FailedMount events of the stuck-LUKS kind;
+# returns 1 when there are none.
+stuck_mount_pod_lines() {
+  local namespace="$1" events_json lines
+  events_json="$(timeout 30s kubectl get events -n "$namespace" --kubeconfig "$kubeconfig_path" \
+    --request-timeout=15s --field-selector reason=FailedMount -o json 2>>"$log_file")" || return 1
+  lines="$(printf '%s' "$events_json" | jq -r '
+    .items[] | select(.involvedObject.kind == "Pod")
+    | select(.message | test("luksClose|failed to close active crypto device|is still in use"))
+    | "\(.involvedObject.name)\t\(([.message | scan("pvc-[0-9a-f]{8}-[0-9a-f-]{27}")][0]) // "")"' \
+    2>>"$log_file" | sort -u)" || return 1
+  [ -n "$lines" ] || return 1
+  printf '%s\n' "$lines"
+}
+
+# Redraw a wget-style progress bar in place; only on an interactive terminal.
+rollout_progress_bar() {
+  local elapsed="$1" total="$2" width=30 filled i bar=""
+  [ -t 1 ] || return 0
+  [ "$total" -gt 0 ] || return 0
+  [ "$elapsed" -le "$total" ] || elapsed="$total"
+  filled=$((elapsed * width / total))
+  for ((i = 0; i < width; i++)); do
+    if [ "$i" -lt "$filled" ]; then bar="${bar}="; elif [ "$i" -eq "$filled" ]; then bar="${bar}>"; else bar="${bar} "; fi
+  done
+  printf '\r    [%s] %ss/%ss' "$bar" "$elapsed" "$total"
+}
+
+rollout_progress_bar_clear() {
+  [ -t 1 ] || return 0
+  printf '\r\033[K'
+}
+
 check_rollout_ready() {
   local app="$1"
   local namespace="$2"
@@ -2297,7 +2343,31 @@ check_rollout_ready() {
   while IFS= read -r resource; do
     [ -z "$resource" ] && continue
     log "$app [$phase]: waiting for rollout status: $resource (timeout=$rollout_timeout)" "$(color_blue "$app") [$phase]: waiting for rollout status: $resource (timeout=$rollout_timeout)"
-    if ! kubectl rollout status -n "$namespace" --kubeconfig "$kubeconfig_path" --timeout="$rollout_timeout" "$resource" >>"$log_file" 2>&1; then
+    # Wait in 30s slices so a known unrecoverable mount error ends the wait
+    # early instead of burning the whole rollout timeout.
+    local waited=0 total slice_ok=0
+    total="$(rollout_timeout_seconds)"
+    while [ "$waited" -lt "$total" ]; do
+      kubectl rollout status -n "$namespace" --kubeconfig "$kubeconfig_path" --timeout=30s "$resource" >>"$log_file" 2>&1 &
+      local kpid=$! tick=0 slice_rc=0
+      while kill -0 "$kpid" 2>/dev/null; do
+        rollout_progress_bar "$((waited + tick))" "$total"
+        sleep 1
+        tick=$((tick + 1))
+      done
+      wait "$kpid" || slice_rc=$?
+      rollout_progress_bar_clear
+      if [ "$slice_rc" -eq 0 ]; then
+        slice_ok=1
+        break
+      fi
+      waited=$((waited + 30))
+      if [ "$phase" != "volume repair" ] && [ "$waited" -ge 30 ] && stuck_mount_pod_lines "$namespace" >/dev/null; then
+        log "$app [$phase]: $resource stuck on LUKS mount error after ${waited}s; ending rollout wait early" "$(color_blue "$app") [$phase]: $resource stuck on LUKS mount error after ${waited}s; ending rollout wait early"
+        return 1
+      fi
+    done
+    if [ "$slice_ok" -ne 1 ]; then
       log "$app [$phase]: rollout failed for $resource (return_code=1)" "$(color_blue "$app") [$phase]: rollout failed for $resource (return_code=$(color_bash_return_code 1))"
       return 1
     fi
@@ -2368,13 +2438,180 @@ maybe_repair_http_precheck() {
   return 0
 }
 
+# With the Longhorn volume detached and its workload stopped, a surviving
+# /dev/mapper/<volume> on the node is a stale LUKS mapping. After a separate
+# confirmation, unmount leftover kubelet mounts of it and close it over SSH.
+# Never kills processes; reports holders instead. Returns 0 when nothing is
+# stale or it was closed, 1 otherwise.
+repair_stale_luks_on_node() {
+  local app="$1" vol="$2" node="$3" host out
+  local ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10)
+  [[ "$vol" =~ ^pvc-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 1
+  case "$node" in ''|*[!A-Za-z0-9.-]*) log "$app: unknown node for $vol; skipping node-side repair"; return 1 ;; esac
+  host="root@${node}.${node_ssh_domain}"
+
+  if ! out="$(ssh "${ssh_opts[@]}" "$host" "test -e /dev/mapper/$vol && echo present || echo absent" 2>>"$log_file")"; then
+    log "$app: cannot SSH to $host; close /dev/mapper/$vol manually on $node"
+    return 1
+  fi
+  if [ "$out" != "present" ]; then
+    log "$app: no stale /dev/mapper/$vol on $node"
+    return 0
+  fi
+
+  if ! dialog --clear --begin 2 10 --defaultno \
+      --title "Close stale LUKS mapping on $node?" \
+      --yes-label "Close over SSH" --no-label "Skip" \
+      --yesno "The Longhorn volume $vol is detached and $app is stopped, but /dev/mapper/$vol still exists on $node.\n\nConnect as $host and:\n  1. unmount leftover mounts of that device under /var/lib/kubelet\n  2. cryptsetup luksClose $vol (dmsetup remove as fallback)\n\nNo processes are killed. If something still holds the device, its name is logged and the repair stops. Data on the volume is untouched.\n\nProceed?" 20 110; then
+    log "$app: user declined SSH LUKS repair on $node"
+    return 1
+  fi
+  log "$app: user approved SSH LUKS repair of $vol on $host"
+
+  out="$(ssh "${ssh_opts[@]}" "$host" bash -s -- "$vol" <<'EOF_REMOTE' 2>&1
+vol="$1"; dev="/dev/mapper/$vol"
+[ -e "$dev" ] || { echo "already gone"; exit 0; }
+findmnt -rn -S "$dev" -o TARGET | grep '^/var/lib/kubelet/' | sort -r | while read -r t; do
+  echo "umount $t"; umount "$t" || echo "umount failed: $t"
+done
+if cryptsetup luksClose "$vol" 2>&1 || dmsetup remove "$vol" 2>&1; then :; fi
+if [ -e "$dev" ]; then
+  echo "STILL PRESENT"
+  fuser -vm "$dev" 2>&1 || true
+  findmnt -rn -S "$dev" -o TARGET || true
+  exit 1
+fi
+echo "closed"
+EOF_REMOTE
+)"
+  local rc=$?
+  printf '%s\n' "$out" >>"$log_file"
+  log "$app: SSH LUKS repair on $node rc=$rc: $(printf '%s' "$out" | tr '\n' ' ' | cut -c1-300)"
+  return "$rc"
+}
+
+# Detect pods stuck on a Longhorn encrypted-volume mount whose old LUKS mapping
+# is still open on the node ("cryptsetup luksClose ... is still in use"). The
+# usual cure is a clean detach: scale the owning workload to zero, wait for
+# Longhorn to detach the volume, then restore the saved replica count.
+# Returns 0 when repaired and rollout is ready, 1 when nothing detected or
+# declined, 2 when an approved repair failed (already recorded).
+maybe_repair_stuck_volume_mount() {
+  local app="$1" namespace="$2" phase="$3"
+  local kc=(--kubeconfig "$kubeconfig_path" --request-timeout=15s)
+  local stuck_lines line pod volume pod_json owner_kind owner_name rs_json
+  local workloads="" volumes="" workload replicas state i stuck_pod_names=""
+  local -A saved_replicas=() volume_nodes=()
+  [ "$dry_run" -eq 0 ] || return 1
+
+  stuck_lines="$(stuck_mount_pod_lines "$namespace")" || return 1
+
+  while IFS=$'\t' read -r pod volume; do
+    [ -n "$pod" ] || continue
+    pod_json="$(timeout 20s kubectl get pod "$pod" -n "$namespace" "${kc[@]}" -o json 2>/dev/null)" || continue
+    # Skip pods that have since started.
+    [ "$(printf '%s' "$pod_json" | jq -r '[.status.containerStatuses[]?.ready] | (length > 0 and all)')" != "true" ] || continue
+    owner_kind="$(printf '%s' "$pod_json" | jq -r '.metadata.ownerReferences[0].kind // ""')"
+    owner_name="$(printf '%s' "$pod_json" | jq -r '.metadata.ownerReferences[0].name // ""')"
+    if [ "$owner_kind" = "ReplicaSet" ]; then
+      rs_json="$(timeout 20s kubectl get replicaset "$owner_name" -n "$namespace" "${kc[@]}" -o json 2>/dev/null)" || continue
+      owner_kind="$(printf '%s' "$rs_json" | jq -r '.metadata.ownerReferences[0].kind // ""')"
+      owner_name="$(printf '%s' "$rs_json" | jq -r '.metadata.ownerReferences[0].name // ""')"
+    fi
+    case "$owner_kind" in Deployment|StatefulSet) ;; *) continue ;; esac
+    stuck_pod_names="$stuck_pod_names pod/$pod"
+    case " $workloads " in *" ${owner_kind,,}/$owner_name "*) ;; *) workloads="$workloads ${owner_kind,,}/$owner_name" ;; esac
+    if [ -n "$volume" ]; then
+      volumes="$volumes $volume"
+      volume_nodes[$volume]="$(printf '%s' "$pod_json" | jq -r '.spec.nodeName // ""')"
+    fi
+  done <<EOF_STUCK
+$stuck_lines
+EOF_STUCK
+  workloads="${workloads# }"
+  volumes="${volumes# }"
+  [ -n "$workloads" ] || return 1
+
+  log "$app [$phase]: pods stuck on LUKS 'still in use' mount error; workloads: $workloads; volumes: ${volumes:-unknown}" \
+    "$(color_blue "$app") [$phase]: pods stuck on LUKS 'still in use' mount error; workloads: $workloads"
+  if ! dialog --clear --begin 2 10 --defaultno \
+      --title "Repair stuck encrypted volume mount ($app)?" \
+      --yes-label "Apply repair" --no-label "Skip repair" \
+      --yesno "Pods of $app cannot mount their encrypted Longhorn volume. The kubelet fails to close a stale LUKS mapping:\n  'cryptsetup luksClose ... is still in use'\n\nWorkloads: $workloads\nVolumes: ${volumes:-unknown}\n\nRepair: scale only these workloads to 0, wait for Longhorn to detach the volume (clears the stale mapping), then restore the saved replica counts and wait for rollout. Only $app is stopped; no PVCs or data are deleted.\n\nIf the stale mapping survives the detach, you will be asked separately before the script connects to the node over SSH (root) to unmount leftover kubelet mounts and run cryptsetup luksClose.\n\nApply this repair?" 24 112; then
+    log "$app: user declined stuck volume mount repair"
+    return 1
+  fi
+  log "$app: user approved stuck volume mount repair"
+
+  for workload in $workloads; do
+    replicas="$(timeout 20s kubectl get "$workload" -n "$namespace" "${kc[@]}" -o jsonpath='{.spec.replicas}' 2>>"$log_file")"
+    saved_replicas[$workload]="${replicas:-1}"
+    [ "${saved_replicas[$workload]}" != "0" ] || saved_replicas[$workload]=1
+    log "$app: saved replicas $workload=${saved_replicas[$workload]}; scaling to 0"
+    timeout 30s kubectl scale "$workload" -n "$namespace" "${kc[@]}" --replicas=0 >>"$log_file" 2>&1 || true
+  done
+
+  # Wait only for the stuck pods themselves: an instance label would also match
+  # sibling workloads (for example the database) that are meant to keep running.
+  if [ -n "$stuck_pod_names" ]; then
+    # shellcheck disable=SC2086
+    timeout 240s kubectl wait --for=delete pod -n "$namespace" "${kc[@]}" --timeout=200s \
+      $stuck_pod_names >>"$log_file" 2>&1 || log "$app: stuck pods did not terminate within 200s"
+  fi
+
+  local detached=1 vol
+  for vol in $volumes; do
+    state=""
+    for i in $(seq 1 36); do
+      state="$(timeout 20s kubectl get volumes.longhorn.io "$vol" -n longhorn-system "${kc[@]}" -o jsonpath='{.status.state}' 2>>"$log_file")"
+      [ "$state" != "detached" ] || break
+      sleep 5
+    done
+    log "$app: Longhorn volume $vol state after scale-down: ${state:-unknown}"
+    [ "$state" = "detached" ] || detached=0
+  done
+
+  if [ "$detached" -eq 1 ]; then
+    for vol in $volumes; do
+      repair_stale_luks_on_node "$app" "$vol" "${volume_nodes[$vol]:-}" || detached=0
+    done
+  fi
+
+  for workload in "${!saved_replicas[@]}"; do
+    log "$app: restoring $workload to ${saved_replicas[$workload]} replicas"
+    timeout 30s kubectl scale "$workload" -n "$namespace" "${kc[@]}" --replicas="${saved_replicas[$workload]}" >>"$log_file" 2>&1 || \
+      log "$app: FAILED to restore replicas of $workload; restore it manually to ${saved_replicas[$workload]}"
+  done
+
+  if [ "$detached" -ne 1 ]; then
+    record_failure_and_maybe_abort "Stuck volume repair incomplete ($app)" \
+      "Workloads were restored, but a Longhorn volume did not detach. Close the stale LUKS mapping on the node manually (cryptsetup luksClose), then retry. See $log_file."
+    return 2
+  fi
+  if ! check_rollout_ready "$app" "$namespace" "volume repair"; then
+    record_failure_and_maybe_abort "Stuck volume repair failed ($app)" \
+      "Volume detached and workloads restored, but rollout is still not ready. The stale LUKS mapping may remain on the node. See $log_file."
+    return 2
+  fi
+  log "$app [$phase]: stuck volume mount repaired"
+  return 0
+}
+
 run_prechecks() {
   local app="$1"
   local namespace="$2"
 
   if ! check_rollout_ready "$app" "$namespace" "precheck"; then
-    record_failure_and_maybe_abort "Precheck rollout failed ($app)" "Workload rollout status failed in namespace $namespace."
-    return 1
+    local mount_repair_status=0
+    maybe_repair_stuck_volume_mount "$app" "$namespace" "precheck" || mount_repair_status=$?
+    if [ "$mount_repair_status" -eq 0 ]; then
+      :
+    elif [ "$mount_repair_status" -eq 2 ]; then
+      return 1
+    else
+      record_failure_and_maybe_abort "Precheck rollout failed ($app)" "Workload rollout status failed in namespace $namespace."
+      return 1
+    fi
   fi
 
   if ! check_ingress_http_codes "$app" "$namespace" "precheck"; then
@@ -2399,8 +2636,14 @@ run_postchecks() {
   local namespace="$2"
 
   if ! check_rollout_ready "$app" "$namespace" "postcheck"; then
-    record_failure_and_maybe_abort "Postcheck rollout failed ($app)" "Workload rollout status failed in namespace $namespace."
-    return 1
+    local mount_repair_status=0
+    maybe_repair_stuck_volume_mount "$app" "$namespace" "postcheck" || mount_repair_status=$?
+    if [ "$mount_repair_status" -eq 2 ]; then
+      return 1
+    elif [ "$mount_repair_status" -ne 0 ]; then
+      record_failure_and_maybe_abort "Postcheck rollout failed ($app)" "Workload rollout status failed in namespace $namespace."
+      return 1
+    fi
   fi
 
   if ! check_ingress_http_codes "$app" "$namespace" "postcheck"; then
