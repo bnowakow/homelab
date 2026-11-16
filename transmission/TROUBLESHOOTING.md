@@ -117,3 +117,56 @@ a delay, and make `startup.sh` stop if VPN setup fails. Enable the kill switch
 before connecting. Do not restart the current startup service until repaired:
 its successful continuation runs `fix-config.sh`, which restarts Transmission.
 No running host services were changed during this review.
+
+## Script repair applied in the workspace
+
+`nord-run.sh` now targets NordVPN 6 (the captured host runs 6.0.2):
+
+- Removed the P2P group from both connect and auto-connect commands, retaining
+  Czech_Republic as the desired country.
+- Replaced `set protocol tcp` plus removed `set technology openvpn` with
+  `set protocol openvpn_tcp`.
+- Replaced removed `set cybersec off` with `set protection off`. This setting
+  controls real-time threat protection; the kill switch remains enabled.
+- Enabled the kill switch before connection configuration and attempts.
+- Replaced the invalid `return` loop with five attempts, each limited to 60
+  seconds, separated by ten seconds. Exhaustion exits unsuccessfully.
+- Added strict error handling, resolved the token relative to the script, and
+  skipped login when `nordvpn account` succeeds. Removed the HOME override.
+- Kept the independent IP protection check, now rejecting HTTP failures,
+  malformed JSON, and any response without `protected: true`.
+
+`startup.sh` now fails on unsuccessful VPN setup, exits unsuccessfully when run
+without root, resolves its directory from the script path, and skips mounting
+already-mounted NFS paths. Other failures also stop startup. `fix-config.sh`
+itself still needs separate fail-fast improvements.
+
+NordVPN documents these breaking changes in its
+[Linux 6.0 announcement](https://nordvpn.com/blog/nordvpn-linux-6-0/).
+Installed CLI help also confirmed `openvpn_tcp`, `protection`, and country-based
+`autoconnect` syntax.
+
+Validation: Bash syntax checks passed for all changed scripts. Mocked execution
+passed successful connection, five failed attempts, unprotected response,
+failed HTTP check, and malformed JSON scenarios. Tests confirmed the kill switch
+is enabled before connecting and obsolete commands are absent. No live VPN
+connection or service restart was performed.
+
+### Apply on the host
+
+The changes are in `/home/sup/code/homelab/transmission`. They do not change the
+already-running shell loop. From that directory on the host, run:
+
+```bash
+sudo systemctl restart nordvpn-and-transmission.service
+sudo journalctl -u nordvpn-and-transmission.service -n 60 --no-pager
+nordvpn status
+nordvpn settings
+```
+
+Restarting the startup service stops its old loop and executes the repaired
+script. A successful startup also runs `fix-config.sh`, which copies the NFS
+settings and restarts Transmission, briefly interrupting transfers. On failure,
+inspect the journal; the script leaves the kill switch enabled. Confirm that
+connection retries no longer flood the journal and that VPN protection succeeds.
+The NFS copy of the repository is separate; these edits do not synchronize it.
