@@ -31,4 +31,8 @@ capture journal journalctl -b --since '-30 minutes' -u nordvpnd -u nordvpn-and-t
 capture kernel journalctl -b -k --since '-30 minutes' --no-pager
 capture transmission tail -n 1500 /var/log/transmission-daemon.log
 capture resolver cat /etc/resolv.conf
+# Keep captures private, but let the user who invoked sudo inspect them.
+if [[ -n ${SUDO_UID:-} && -n ${SUDO_GID:-} ]]; then
+    chown -R -- "${SUDO_UID}:${SUDO_GID}" "$out"
+fi
 printf 'Saved diagnostics to %s\nFiles can contain IP addresses and torrent names; review before sharing.\n' "$out"

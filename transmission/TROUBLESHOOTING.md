@@ -39,6 +39,8 @@ sudo bash ./capture-diagnostics.sh
 Run again after recovery so VPN status, routes, firewall counters, journal,
 mounts, and recent Transmission messages can be compared. Output directories
 are private under `/tmp`; copy them to durable storage if needed before reboot.
+When invoked with sudo, the script gives the invoking user ownership of the
+capture directory and files, retaining private permissions.
 The script only reads state, makes no outbound connectivity probes, and limits
 each command to 20 seconds. A failed command is recorded in its output file.
 Captures can contain torrent names, IP addresses, and firewall details.
@@ -65,3 +67,22 @@ These deserve a maintenance change, but are not proven causes of this stall:
 - The startup unit declares neither required NFS mounts nor explicit VPN
   readiness dependencies. Transmission can also start independently through its
   own `multi-user.target` enablement; actual enablement was not accessible here.
+
+## Follow-up at 21:10 CET
+
+The log view refreshed through 21:10:42. From 20:50 onward there were 1,073
+DHT announce failures across six torrent names, 107 magnet-status messages, and
+155 unavailable IPv6 connection errors. Metadata was still reported as unparsed
+near 21:10. This is ongoing discovery trouble, but does not prove a host-wide
+network failure or a lack of seeders.
+
+At 20:57:00, :02, :04, and :16, another torrent logged checksum failures for
+newly downloaded piece 891. This indicates receipt of piece data around 20:57,
+though that data failed validation. The log does not identify whether the cause
+was a bad peer, local data corruption, or another fault. It does not establish
+that transfers remained possible at 21:10.
+
+Diagnostic directories exist for 20:21, 20:23, and 21:10, but their private
+permissions prevent this investigation session from reading them. The latest
+capture needs to be made readable by the host user before VPN state can be
+correlated with these errors.
