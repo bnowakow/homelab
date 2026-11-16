@@ -170,3 +170,20 @@ settings and restarts Transmission, briefly interrupting transfers. On failure,
 inspect the journal; the script leaves the kill switch enabled. Confirm that
 connection retries no longer flood the journal and that VPN protection succeeds.
 The NFS copy of the repository is separate; these edits do not synchronize it.
+
+## Restart verification at 21:17 CET
+
+The service restart stopped the original retry loop at 21:15:38. The repaired
+startup then failed immediately at 21:15:39 with NordVPN's
+`[Fatal] cannot get user home dir`. Removing the previous HOME override exposed
+that the systemd service does not supply the home environment needed by the CLI.
+The script is now invoked with `runuser --user root -- ./nord-run.sh` from
+`startup.sh`; runuser initializes HOME from root's account without hard-coding
+another user's home. Bash syntax checks pass; this follow-up still requires a
+host service restart and fresh capture to verify runtime behavior.
+
+At 21:17 the pre-existing Poland VPN connection remained up with the kill switch
+enabled, and Transmission reported downloading 2.99 KB/s and uploading
+81.99 KB/s. The failed startup did not restart Transmission. No VM reboot is
+required to apply the follow-up; restart the startup service again and capture
+its outcome.

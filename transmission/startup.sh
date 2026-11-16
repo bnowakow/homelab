@@ -13,7 +13,9 @@ fi
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
-./nord-run.sh
+# systemd may omit HOME. runuser initializes root's login environment for the
+# NordVPN CLI, which otherwise fails before contacting its daemon.
+/usr/sbin/runuser --user root -- ./nord-run.sh
 mountpoint -q /mnt/PlexPool/plex || mount -vvv /mnt/PlexPool/plex
 mountpoint -q /mnt/MargokPool/home || mount -vvv /mnt/MargokPool/home
 ./fix-config.sh
