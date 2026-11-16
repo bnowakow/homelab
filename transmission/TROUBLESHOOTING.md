@@ -198,3 +198,26 @@ connection/protection checks or the subsequent Transmission restart. The
 pre-existing VPN was connected, the kill switch enabled, and Transmission
 reported 10.50 KB/s downloading. Take a later capture without another restart to
 verify that startup reaches the keepalive loop.
+
+### Follow-up capture at 21:19:25
+
+Startup still failed at 21:18:40, immediately after `LAN discovery is already
+set to enabled.` The CLI appears to return a nonzero status for this unchanged
+setting. Added `set_vpn` to accept an explicit single-line `is already set to`
+response when a setter returns failure, while preserving other failures. Mocked
+checks passed unchanged-setting, permission-denied, and multiline-error cases;
+Bash syntax validation passed. Another service restart is required to apply it.
+The VPN and kill switch remained enabled. Transmission reported downloading
+60.33 KB/s and uploading 53.87 KB/s in this capture.
+
+## Successful repair verified at 21:22:38 CET
+
+Capture `/tmp/transmission-diagnostics-20261116-212238` confirms startup completed:
+VPN connected to Czech Republic #109 on its first attempt at 21:21:05, and the
+independent protection check passed at 21:21:06. Config copy and ownership
+commands completed; Transmission restarted successfully at 21:21:40. The startup
+service reached `transmission-daemon-keepalive.sh`, with no obsolete P2P retry
+loop. Transmission reported downloading 29.85 KB/s and uploading 5.20 KB/s.
+The VPN kill switch remained enabled. No VM reboot is needed. Remaining IPv6
+peer connection errors do not prevent the observed IPv4 transfers; this repair
+confirms working startup, not that every torrent has available peers.

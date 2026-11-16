@@ -3,7 +3,24 @@ set -euo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
-nordvpn set analytics off
+# Some setters return failure when the requested value is already configured.
+# Accept only that explicit single-line response; propagate other failures.
+set_vpn() {
+    local output status
+    if output=$(nordvpn set "$@" 2>&1); then
+        printf '%s\n' "$output"
+        return 0
+    else
+        status=$?
+    fi
+    printf '%s\n' "$output"
+    if [[ "$output" != *$'\n'* && "$output" == *' is already set to '* ]]; then
+        return 0
+    fi
+    return "$status"
+}
+
+set_vpn analytics off
 # Avoid re-authenticating an already logged-in daemon on every startup.
 if ! nordvpn account >/dev/null 2>&1; then
     if [[ ! -s "$script_dir/.nord_token" ]]; then
@@ -14,11 +31,11 @@ if ! nordvpn account >/dev/null 2>&1; then
 fi
 
 # Enable the kill switch before changing connection settings.
-nordvpn set killswitch on
-nordvpn set autoconnect on Czech_Republic
-nordvpn set lan-discovery enabled
-nordvpn set protocol openvpn_tcp
-nordvpn set protection off
+set_vpn killswitch on
+set_vpn autoconnect on Czech_Republic
+set_vpn lan-discovery enabled
+set_vpn protocol openvpn_tcp
+set_vpn protection off
 
 # NordVPN 6 removed the P2P group; standard locations support P2P.
 connected=false
