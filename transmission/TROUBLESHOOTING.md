@@ -187,3 +187,14 @@ enabled, and Transmission reported downloading 2.99 KB/s and uploading
 81.99 KB/s. The failed startup did not restart Transmission. No VM reboot is
 required to apply the follow-up; restart the startup service again and capture
 its outcome.
+
+### Follow-up capture at 21:18:38
+
+The home-directory fix allowed NordVPN CLI commands to run. The captured journal
+shows analytics configuration, kill-switch confirmation, and successful Czech
+Republic auto-connect configuration by 21:18:40. The capture started only 20 ms
+after the startup service was launched, so it does not verify completion of
+connection/protection checks or the subsequent Transmission restart. The
+pre-existing VPN was connected, the kill switch enabled, and Transmission
+reported 10.50 KB/s downloading. Take a later capture without another restart to
+verify that startup reaches the keepalive loop.
