@@ -1,0 +1,13 @@
+/var/log/syslog
+{
+    daily
+    rotate 7
+    missingok
+    notifempty
+    compress
+    delaycompress
+    create 0640 root adm
+    postrotate
+        /usr/lib/rsyslog/rsyslog-rotate
+    endscript
+}

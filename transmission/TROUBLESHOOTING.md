@@ -1,0 +1,67 @@
+# Intermittent download stall — 2026-11-16
+
+Downloads worked after reboot and a manual `fix-config.sh`, stalled, and then
+resumed without an intervention from this investigation (reported by the user).
+No VPN, firewall, or daemon settings were changed.
+
+## Evidence
+
+The readable Transmission log ends at 20:19:09 CET in the investigation's
+filesystem view. It does not include a verified recovery event or transfer-rate
+history. Between 19:00 and that endpoint it contains 938 IPv4 DHT announce
+failures and 566 magnet-status messages. Near 20:16–20:19, four magnets repeatedly
+failed DHT announces, with `metainfo parsed 0`. DHT node counts increased from
+roughly 408 to 428, which is evidence of some peer-discovery activity, not proof
+of a healthy download path. IPv6 peer connections also failed with errno 99
+(`Cannot assign requested address`). A separate torrent received a tracker
+warning that its info hash was not authorized.
+
+These observations are consistent with peer/metadata discovery delays. They do
+not establish a VPN outage, a kill-switch fault, or the cause of all stalled
+transfers. The DHT error text includes misleading-looking errno strings such as
+`Success`; those strings alone do not diagnose the firewall. IPv6 failures do
+not demonstrate that IPv4 downloads are broken.
+
+The investigation environment cannot reach the host system bus, NordVPN socket,
+or network interfaces, cannot elevate with sudo, and cannot read the system
+journal, syslog, or live settings.json. Live VPN/firewall state and recovery
+therefore remain unverified. Existing logging is already enabled through
+`--logfile /var/log/transmission-daemon.log` in the installed daemon unit.
+
+## Capture the next stall
+
+Before restarting anything, run on the actual host:
+
+```bash
+sudo bash ./capture-diagnostics.sh
+```
+
+Run again after recovery so VPN status, routes, firewall counters, journal,
+mounts, and recent Transmission messages can be compared. Output directories
+are private under `/tmp`; copy them to durable storage if needed before reboot.
+The script only reads state, makes no outbound connectivity probes, and limits
+each command to 20 seconds. A failed command is recorded in its output file.
+Captures can contain torrent names, IP addresses, and firewall details.
+
+Also record whether all downloads stalled or only particular magnets, the UI's
+peer counts and tracker errors, and the stall/recovery times. This separates a
+host-wide tunnel failure from a torrent with no useful peers. If VPN status is
+disconnected, retain the kill switch and inspect the NordVPN journal before
+reconnecting. If VPN is connected, check tracker/peer state and storage errors
+before restarting Transmission. Do not disable the kill switch as a test.
+
+## Separate issues found in startup/recovery code
+
+These deserve a maintenance change, but are not proven causes of this stall:
+
+- `fix-config.sh` overwrites settings from the NFS copy and restarts the daemon;
+  it has no root check or fail-fast handling if a stop/copy fails.
+- `startup.sh` continues after `nord-run.sh` fails, since its exit status is not
+  checked. The keepalive checks service status only, not transfer or VPN health.
+- `nord-run.sh` uses `return 1` outside a function in its connection loop.
+- The installed Transmission unit uses `ExecStop=/bin/kill -s STOP $MAINPID`.
+  SIGSTOP suspends a process rather than allowing graceful shutdown. Inspect
+  stop/restart journal entries before correcting this unit on the host.
+- The startup unit declares neither required NFS mounts nor explicit VPN
+  readiness dependencies. Transmission can also start independently through its
+  own `multi-user.target` enablement; actual enablement was not accessible here.
