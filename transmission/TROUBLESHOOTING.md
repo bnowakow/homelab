@@ -86,3 +86,34 @@ Diagnostic directories exist for 20:21, 20:23, and 21:10, but their private
 permissions prevent this investigation session from reading them. The latest
 capture needs to be made readable by the host user before VPN state can be
 correlated with these errors.
+
+## Diagnostic capture reviewed after ownership change
+
+The 21:10:06 capture confirms NordVPN was connected to Poland #293 over
+OpenVPN TCP, with 1h22m uptime and the kill switch enabled. Routing table 205
+has its default route through `nordtun`. Native nftables rules in `inet nordvpn`
+apply default-drop input/output policies and permit tunnel traffic. The empty
+iptables output alone must not be interpreted as a missing kill switch.
+Transmission was running and its service status reported downloading 20.16 KB/s
+and uploading 13.58 KB/s. NFS mounts were present, storage had 3 TB available,
+and the captured kernel journal had no entries in the requested time window.
+These are point-in-time observations, not a full connectivity/leak test.
+
+A definite startup defect is now confirmed: the startup service was still
+inside `nord-run.sh` after 1h22m. NordVPN rejects
+`nordvpn connect --group p2p Czech_Republic` with
+`P2P group is no longer available. All servers now support P2P.`
+The subsequent `return 1` is invalid outside a function, and the loop immediately
+retries without delay. The startup service had used almost 23 minutes of CPU;
+the captured half-hour journal was about 18 MB. This loop prevents startup from
+reaching its mount/config/keepalive steps and adds unnecessary load. It explains
+why manual `fix-config.sh` was needed, but does not prove the cause of individual
+torrent stalls. The connected Poland server differs from the script's requested
+Czech server.
+
+The repair should remove the obsolete P2P group from both connect and
+autoconnect commands, replace the invalid retry logic with bounded attempts and
+a delay, and make `startup.sh` stop if VPN setup fails. Enable the kill switch
+before connecting. Do not restart the current startup service until repaired:
+its successful continuation runs `fix-config.sh`, which restarts Transmission.
+No running host services were changed during this review.
