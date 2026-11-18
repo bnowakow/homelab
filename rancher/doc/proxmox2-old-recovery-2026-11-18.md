@@ -143,3 +143,49 @@ See [the detailed handoff](longhorn-shim-recovery-2026-11-18.md#handoff-to-codex
 for exact backup/log location, timestamps, observed settings, source-confirmed
 cordon behavior and next checks. These observations supersede earlier status
 snapshots above; do not assume the cluster still has that exact state.
+
+## Kuma volume detach checkpoint — 2026-11-18, 18:38–18:50 CET
+
+Kuma remained scaled to zero and its Fleet Bundle remained paused. The
+`proxmox2-old` node remained cordoned and tainted with
+`maintenance=storage-repair:NoSchedule`; Longhorn node and disk scheduling
+were both disabled.
+
+The Kuma volume
+`pvc-326def38-faba-49f6-8a78-ebf719227220` initially showed an apparently
+stale attachment, but inspection proved that it still had a live Longhorn
+engine and iSCSI device on `proxmox2-old`. Its only surviving replica was on
+`proxmox3`:
+
+- engine: `...-e-0`, running on `proxmox2-old`;
+- replica: `...-r-9cdce044`, on `proxmox3`;
+- device: `/dev/longhorn/pvc-326def38-faba-49f6-8a78-ebf719227220`;
+- no filesystem mount or active application consumer was found;
+- no Kubernetes `VolumeSnapshot` or `VolumeSnapshotContent` existed.
+
+The Longhorn `VolumeAttachment` contained a stale
+`snapshot-controller` attachment ticket. After backing up the volume and
+attachment YAML under `/var/tmp/kuma-volume-recovery-*`, the ticket was
+removed and the Longhorn volume was requested to detach by setting its
+`spec.nodeID` to empty. The first detach was immediately reattached by the
+stale ticket; the ticket was removed again and the detach request repeated.
+
+The final observed state was:
+
+- volume `detached`, with empty `nodeID` and `currentNodeID`;
+- Longhorn attachment tickets `{}`;
+- old engine stopped;
+- old iSCSI device removed;
+- replica CR still present on `proxmox3`, stopped, with data directory
+  `/var/lib/longhorn/replicas/pvc-326def38-faba-49f6-8a78-ebf719227220-3b607b98`;
+- no PVC data copy, filesystem repair, force detach, replica deletion, or
+  transfer-cap change performed.
+
+The volume reported `robustness=unknown` while detached because no engine was
+running. This is not evidence of data loss or filesystem integrity. Do not
+delete the stopped engine/replica, attach the volume, or restart Kuma until a
+separate controlled validation on `proxmox3` is planned. Any PVC migration or
+data copy must first follow
+`longhorn/README-5-pvc-migration-maintenance.md`, including cluster-wide
+application shutdown, reconciliation control, saved state, verified stop and
+cap-change logging.

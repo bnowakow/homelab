@@ -7,6 +7,32 @@ This incident-specific script allows ONLY these existing pod names and UIDs:
 - longhorn-global-manager-6dc48c46cf-9vqx9: 7524b22f-9af8-455f-b775-4b8b072ff302
 - instance-manager-d3fcafc43c01bde60d0358c3be85ac94: 951c0149-19f4-40e1-a207-603059e8b893
 
+## Kuma attachment recovery checkpoint — 2026-11-18, 18:50 CET
+
+Kuma remained stopped, its Fleet Bundle remained paused, and `proxmox2-old`
+remained cordoned/tainted with Longhorn node and disk scheduling disabled.
+The Kuma volume `pvc-326def38-faba-49f6-8a78-ebf719227220` was found to have
+an active engine and iSCSI device on `proxmox2-old`, so it was not treated as
+mere stale metadata. No mount or active application consumer was found. Its
+surviving replica was on `proxmox3`.
+
+There were no Kubernetes `VolumeSnapshot` resources. A stale Longhorn
+`snapshot-controller` attachment ticket was backed up and removed. A normal
+Longhorn detach request was then issued. The ticket recreated once, so it was
+removed again before repeating the detach request.
+
+Final checkpoint: the volume was detached, the attachment-ticket map was
+empty, the old engine and iSCSI device stopped/disappeared, and the replica
+CR/data directory remained on `proxmox3`:
+
+`/var/lib/longhorn/replicas/pvc-326def38-faba-49f6-8a78-ebf719227220-3b607b98`
+
+The detached volume reported `robustness=unknown`, which is expected without
+an active engine and is not evidence of data loss. No replica deletion, force
+detach, filesystem repair, PVC copy, or transfer-cap change was performed.
+Do not attach the volume or restart Kuma until a separately reviewed,
+controlled validation on `proxmox3` is ready.
+
 The two manager pods must already be terminating. The instance manager may be nonterminating because its PDB prevents eviction. The script does not evict it or alter its PDB: this is recovery of confirmed dead runtime tasks, not normal node eviction. Every application/container task must be STOPPED with absent PID, or absent with an Unknown/Exited CRI record. Exact shim identity and start time are checked; it must own ONLY pause, with no descendants or other live pod-cgroup processes. Any live engine/replica or ready container blocks action. It excludes all CSI, engine-image, etcd, networking and newly recreated infrastructure pods.
 
 Usage on proxmox2-old:
