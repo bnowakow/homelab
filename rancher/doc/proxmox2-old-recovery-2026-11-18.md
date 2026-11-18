@@ -189,3 +189,65 @@ data copy must first follow
 `longhorn/README-5-pvc-migration-maintenance.md`, including cluster-wide
 application shutdown, reconciliation control, saved state, verified stop and
 cap-change logging.
+
+## Kuma validated recovery-copy checkpoint — 2026-11-18, 19:50 UTC
+
+Detailed action/cap history and scripts are in
+[the continuing recovery record](longhorn-shim-recovery-2026-11-18.md).
+Applications were stopped cluster-wide using saved baseline
+`/var/tmp/kuma-recovery-maintenance-20261118T180953924876Z`, preserving AdGuard
+DNS/essential infrastructure. Longhorn backup uses a saved temporary January 1
+schedule because generated CronJob suspension does not persist. Three approved
+standalone Compose containers on proxmox2-old were also paused with saved
+restart policies under `/var/tmp/kuma-host-compose-20261118T192324749221Z`.
+
+Verified raw preservation image:
+`/var/tmp/kuma-preservation-20261118T184540364827Z/source-preserved.img`.
+One working-copy attempt stopped at high PSI; it remains unverified/unused.
+The retry `/var/tmp/kuma-working-20261118T192530502463Z/working.img` matched
+preservation SHA-256, then underwent journal replay and automatic filesystem
+repair. Read-only filesystem validation passed. Database/WAL/SHM were extracted
+at a logged fixed 1 MiB/s, verified and unmounted. SQLite working-copy integrity
+passed at 19:50:08 UTC: 9 monitors, 1 user, 382374 heartbeats, 1 notification.
+Validation evidence: `/var/tmp/kuma-database-validation-20261118T194659989258Z`.
+
+Original Kuma volume remains unmounted on proxmox3, desired replicas 1, Kuma
+zero and Fleet paused. It has NOT yet been repaired or restarted. Guarded
+`repair-kuma-original-filesystem.py` is prepared for a separately reviewed
+original-volume filesystem repair, based on the tested working-image sequence.
+Keep maintenance active until source/application validation or deliberate abort;
+restore Kubernetes and Compose from their separate saved baselines afterward.
+Physical pool health and low pressure are observations, not proof of a repair
+to the underlying incident cause or of restored Longhorn redundancy.
+
+## Original Kuma repair checkpoint — 19:53 UTC
+
+Original filesystem recovery was executed on the unmounted Kuma block device
+on proxmox3 after successful preservation, working-filesystem and SQLite/WAL
+validation. Journal replay, automatic safe repair and full read-only check
+passed without warnings. Evidence:
+`/var/tmp/kuma-original-repair-20261118T195344656712Z`.
+Kuma is still stopped; `restore-kuma-service.py` is prepared for reviewed
+placement/normal detach/manual-ticket handoff and startup on proxmox3 with Fleet
+paused. Do not treat this filesystem repair as a repair of the incident's
+underlying cause or as restored Longhorn redundancy. See the detailed record
+for prerequisites, rollback evidence and separate Kubernetes/Compose restore
+commands. Live Kuma startup has not yet been reported.
+
+## Kuma service recovered — 19:57:52 UTC
+
+Normal validation-ticket detach/CSI handoff succeeded, Kuma was pinned to
+proxmox3 and started at one replica. Pod `uptime-kuma-77dc9cb569-ns26c` became
+Ready; startup logs show successful SQLite WAL connection, schema current and
+HTTP serving. Evidence: `/var/tmp/kuma-service-restore-20261118T195711594510Z`.
+No DB/filesystem error appears in supplied logs. Operator UI/data confirmation
+is still pending. Rancher 503 is expected while Rancher remains stopped;
+Proxmox2-old HTTPS refusal is separate and undiagnosed.
+
+Gradual Kubernetes restoration is prepared with `--keep-recovered-kuma
+--keep-longhorn-paused`; both Kuma and Longhorn Bundles stay paused until
+reconciliation/incident settings are reviewed. Preserve Filebot's original zero
+and restore other replicas/schedules from the maintenance baseline. Standalone
+Compose restoration remains separate. Do not claim the whole incident resolved:
+Longhorn desired count is still 1 for Kuma, old node is cordoned/tainted, and
+underlying storage/runtime cause is unproven.

@@ -1038,3 +1038,376 @@ negative stop timeout avoids automatic SIGKILL:
 Live execution is pending. After verified pause, sample pressure/host readiness
 again before deciding on a new working-copy attempt; keep the verified
 preservation image and failed partial attempt unchanged.
+
+### Standalone Compose pause confirmed — 19:23:46 UTC
+
+Operator plan saved originals at
+`/var/tmp/kuma-host-compose-20261118T192324749221Z`: all three containers were
+running with `unless-stopped` restart policy. Execution disabled and verified
+restart policies from 19:23:41.023139–19:23:41.329308 UTC. Graceful stops were
+confirmed for watchdog at 19:23:42.233999 UTC, Scrutiny at 19:23:45.581605 UTC,
+and PostgreSQL at 19:23:46.152762 UTC. At 19:23:46.235045 UTC the script
+confirmed all three stopped/restart-disabled. No forced kill, container/volume
+removal or database repair was reported. Preserve this separate restoration
+baseline; restore after recovery validation/abort using the documented host
+Compose restore mode, with database health before watchdog startup.
+
+Added a peer-monitor guard to the preservation/working-copy worker: the existing
+non-root SSH command now reads populated `/sys/fs/cgroup/system.slice/docker-*.scope/cgroup.procs`
+and refuses if standalone Docker tasks reappear. This matches the cgroup layout
+actually observed on proxmox2-old; it is not general coverage of rootless Docker
+or all possible container runtimes. Read errors block rather than disabling
+monitoring. It requires no Docker-socket privileges or remote sudo. Future
+rootless/new runtime services still require manual scope review. Code syntax
+checked; live peer check pending.
+
+Next step is another working-copy dry run with the same fixed 1 MiB/s cap and
+all current maintenance/host/storage guards. It copies from the verified
+preservation image into a NEW directory and does not resume or overwrite the
+failed partial image. No new transfer or cap has been requested/applied by this
+preparation change. Low pressure and successful guards are required before
+choosing execution. Pausing Docker is a mitigation, not proof of the spike's
+cause or a storage repair.
+
+### Working-image retry verified — 19:37:43 UTC
+
+Operator completion confirms successful working copy under
+`/var/tmp/kuma-working-20261118T192530502463Z/working.img`.
+At 19:37:43.173498 UTC `image_verified` recorded 268435456 bytes and the
+same SHA-256 `3470b1fd2130d7b2ed136725941695177146a753f9593436af8460ce8d1666a1`,
+purpose working-copy, sourceWritten=false, mountOrRepairAttempted=false,
+source preservation image path unchanged. At 19:37:43.175296 UTC the worker
+confirmed cap 1048576 -> 0, handles closed/worker idle, local/peer PSI zero.
+All supplied late-phase observations from 19:36:29 UTC showed PSI zero.
+Exact initial request/confirmation times and full phase observations remain
+in this retry directory's `actions.jsonl` and `cap-changes.jsonl`; they were
+not included in the supplied tail. No intervening cap change was reported.
+The earlier failed working-copy directory remains unverified and unused.
+
+Successful retry after pausing Docker does not prove those applications caused
+the earlier spike, and no hardware/storage repair has been established.
+Kubernetes maintenance and standalone Compose pause must remain in place
+through remaining filesystem/database validation.
+
+Prepared `recover-kuma-working-journal.py` for this EXACT verified working
+image, with no configurable source-device target:
+
+```bash
+sudo python3 recover-kuma-working-journal.py
+sudo python3 recover-kuma-working-journal.py --execute
+```
+
+Dry-run validates regular file/size/single hardlink, recorded checkpoint hash/
+identity/purpose/path, separation from preservation file, no symlink and no
+loop-device association; prints the two planned commands. Execution uses
+default-no dialog, rechecks Kubernetes maintenance and local low PSI, validates
+identity again, and writes a durable attempt marker before any operation.
+It runs `e2fsck -p -E journal_only working.img` to replay journal ONLY on the
+working file, then `e2fsck -f -n working.img` for full no-write validation.
+Each command is bounded to 60 seconds. It does not use -y or automatically
+escalate beyond journal-only recovery; unacceptable status or textual warnings
+block. Original device and preservation image are never opened for writing.
+No filesystem mount, application start, file extraction or SQLite operation
+occurs. No migration-transfer cap change is made: this is a local filesystem
+operation, not another copy. It has no guaranteed filesystem-operation I/O
+bandwidth limit; assess pressure separately and do not run concurrent workers.
+
+Logs/attempt/result markers are written inside the exact working directory.
+After any attempted journal replay, do not trust the original pre-replay
+working-file checksum as its current content hash. A rerun refuses when an
+attempt marker exists; inspect outcomes rather than repeating blindly. A
+successful `filesystem-validated.json` means only the working-image filesystem
+check passed; database/WAL integrity remains to be tested on extracted working
+files. Preservation image and source remain rollback material.
+
+Mocked guard checks covered accepted exact working image, prior-attempt refusal
+and loop-device refusal. An actual synthetic ext4 command test could not run
+in this sandbox because mke2fs/e2fsck are unavailable; live dry run/execution
+on proxmox3 is pending. Do not claim the journal has been replayed yet.
+
+### Working journal replay completed; free-block counter still inconsistent
+
+Operator executed `recover-kuma-working-journal.py --execute` against the exact
+verified working image. Journal-only command reported `recovering journal`.
+Subsequent `e2fsck -f -n` completed five passes but reported
+`Free blocks count wrong (41283, counted=41281)` and answered `Fix? no`.
+The wrapper refused validation because textual inconsistency remained despite
+an acceptable numeric exit status. No filesystem-validated marker was written.
+This is a two-block free-count discrepancy in the current working-image view;
+it does not establish database corruption, data loss or safety to start Kuma.
+Original device/preservation image were unchanged. Working-image attempt,
+command output and result files are inside the working directory.
+
+Prepared `repair-kuma-working-filesystem.py` for a separate reviewed operation:
+
+```bash
+sudo python3 repair-kuma-working-filesystem.py
+sudo python3 repair-kuma-working-filesystem.py --execute
+```
+
+This targets only the same exact working image after validating its prior
+journal-replay/check results and previous free-count warning. It refuses an
+existing repair-attempt or filesystem-validated marker. Commands are
+`e2fsck -f -p working.img` (force check, automatic safe repairs only) followed
+by `e2fsck -f -n working.img`. There is no -y fallback. Automatic-repair exit
+0/1 is accepted; uncorrectable/operational results stop, and the subsequent
+read-only check must exit 0 without unresolved warnings. It checks maintenance,
+local PSI, file identity/single link/no loop association and records an attempt
+before changes. Each e2fsck command has a 60-second bound. Original block
+device and preservation image are never repair targets; only the disposable
+working file may change. No mount, copy, cap change or app startup occurs.
+
+Logs `working-repair.txt`, `filesystem-after-repair.txt`, result files and a
+successful `filesystem-validated.json` stay inside the working directory.
+Do not repeat after any attempted failure; assess logs. Database/WAL recovery
+and SQLite validation remain separate later steps. Mocked command tests
+verified forced automatic repair addresses only working.img, accepts corrected
+exit 1, and blocks validation on uncorrectable exit 4. Live execution pending.
+
+### Working-image filesystem repaired and verified
+
+Operator ran `repair-kuma-working-filesystem.py --execute` on the disposable
+working image. Forced automatic repair completed; subsequent forced no-write
+check completed all five passes with no free-count warning: 17/65536 files,
+24255/65536 blocks. Wrapper reported working-image filesystem validation
+passed and wrote `filesystem-validated.json`. No original-device/preservation
+repair occurred. SQLite/WAL integrity remains untested.
+
+Prepared next stage:
+
+```bash
+sudo python3 validate-kuma-working-database.py
+sudo python3 validate-kuma-working-database.py --execute
+```
+
+Dry-run verifies the exact working-image path/size/single-link, filesystem-
+validated marker and no current loop attachment, and prints the plan. Execution
+asks default-no dialog or explicit --yes, checks Kubernetes maintenance,
+both-host PSI/k3s identity and peer standalone-Docker exclusion, then mounts
+ONLY this working image as `loop,ro,noload`. It verifies a read-only ext4 mount.
+Original device/preservation image are not opened. The image is mounted only
+for source-file extraction, not for SQLite recovery.
+
+It extracts exactly `kuma.db`, `kuma.db-wal` and `kuma.db-shm` into a new private
+`/var/tmp/kuma-database-validation-TIMESTAMP/database` directory. All must be
+regular non-symlink files; database/WAL must be nonempty. Copy and per-component
+checksum reread use the same 1 MiB/s/64 KiB pacing, with requested/confirmed
+cap records, both-host I/O/k3s/Docker checks about every five seconds and
+maintenance verification about every 30 seconds. Failure closes files, logs
+confirmed cap zero, retains partial evidence and attempts normal unmount; no
+force-unmount or copy retry. Existing source-component sizes/hashes are saved.
+The plan is not yet a requested/applied live cap.
+
+After hash verification it unmounts the working image and confirms copy cap
+zero. Only then opens the extracted database with ordinary SQLite `mode=rw`,
+NOT immutable mode, with WAL/SHM present. SQLite can recover/checkpoint/recreate
+these disposable working files; it cannot modify the mounted image (already
+unmounted), original device or preservation. It sets query_only for SQL,
+runs full `PRAGMA integrity_check`, requires exactly `ok`, and reports only
+safe counts for monitor/user/heartbeat/notification tables and table count.
+No monitor URLs, credentials, notification settings or user records are printed.
+A 60-second SQLite progress deadline applies; filesystem/SQLite integrity and
+application data recency/behavior are distinct checks.
+
+Output/logs stay private in the validation directory. `database-validated.json`
+means only this recovered/extracted working database passed SQLite integrity;
+it does not mean the original volume was repaired or cut over, all committed
+application history was established, or Kuma may safely restart there. Keep
+all applications stopped through recovery/cutover planning. SQLite checks are
+bounded local filesystem operations rather than transfer-cap-governed bulk
+copy; pressure/maintenance are checked before/after them, not continuously
+inside SQLite. Extraction is the monitored capped phase.
+
+A real synthetic SQLite test verified that copying database/WAL/SHM and opening
+normally includes a committed WAL-only row missed by immutable main-database
+access; integrity_check returned ok. Help/syntax checked. Live extraction and
+validation pending; no new transfer cap or extraction has yet been executed.
+
+### SQLite/WAL working-copy validation passed — 19:50:08 UTC
+
+Operator extraction/validation directory:
+`/var/tmp/kuma-database-validation-20261118T194659989258Z`.
+Working image mounted read-only at 19:47:08.558997 UTC, kernel options
+`ro,relatime,norecovery` (/dev/loop0). At 19:47:08.561682 UTC copy cap 0 ->
+1048576 bytes/s requested, confirmed live by PID 1765297 at
+19:47:08.565292 UTC, chunk 65536 bytes, both-host PSI zero.
+Extracted/checksummed components:
+
+| Component | Bytes | SHA-256 |
+| --- | ---: | --- |
+| kuma.db | 61296640 | 2e1f2d941896e4b9d27dee8a3f055fc302583a2e4db691568ec0506de3ab22a5 |
+| kuma.db-wal | 4136512 | 8641f002e7031de230d0a22ac99ae34fb03f2bf01825352fdb263a95e267ff80 |
+| kuma.db-shm | 32768 | aec4e681569c18b73a6519bee0e98f6cdaca427bccfb319699a3dc8d30c4e4fb |
+
+These component hashes describe extraction BEFORE SQLite may recover/checkpoint
+its disposable files; do not assume they are current hashes after SQLite close.
+The working-image database size grew 4096 bytes relative to the pre-journal
+listing; the listed/hash-verified files here came from the recovered filesystem.
+At 19:49:51.071433 UTC the working image was unmounted. At
+19:49:51.073656 UTC cap 1048576 -> 0 was confirmed, handles closed/copy idle.
+Both-host PSI was zero at each supplied observation/transition; no cap
+reduction/change occurred during extraction except final stop. Full cap/action
+records remain in the validation directory.
+
+SQLite 3.46.1 opened normally with WAL supplied (immutable=false). At
+19:50:08.651915 UTC `sqlite_integrity_passed`: integrityCheck=ok, 23 tables,
+monitor=9, user=1, heartbeat=382374, notification=1. Original device and
+preservation untouched. This establishes recovered working-database structural
+integrity, not original-volume repair, application behavior or complete data
+recency. The live original remains attached/unmounted and Kuma remains zero.
+
+### Next original-volume repair prepared, NOT yet executed
+
+Prepared `repair-kuma-original-filesystem.py`, dry-run by default:
+
+```bash
+sudo python3 repair-kuma-original-filesystem.py
+sudo python3 repair-kuma-original-filesystem.py --execute
+```
+
+Unlike prior working-image commands, this operation WRITES filesystem metadata
+to the original unmounted Kuma block device on proxmox3. It is gated on the
+exact verified preservation checkpoint, no write bits on its image, successful
+working filesystem and SQLite/WAL validation, exact original volume UID/UUID,
+attachment only to proxmox3 with the known ticket/count 1, paused Kuma/zero
+replicas, no PVC consumer pods, no device mounts in visible namespaces/holders,
+cluster maintenance, peer Docker pause and both-host low PSI/active stable k3s.
+The filesystem checker helper now exposes `source_guard()`; its normal CLI
+continues to perform the same read-only check.
+
+Dry-run prints the exact resolved original-device commands. Execution requires
+default-no confirmation (or explicit --yes): journal-only recovery, forced
+automatic repair (`-f -p`), then forced no-write check (`-f -n`). These are the
+operations tested successfully on the working image; there is no -y/format/
+forced attachment. Each is bounded to 60 seconds with unmounted/host health
+rechecks between phases. Automatic safe-repair exit 0/1 is accepted; the final
+check must be exit 0 without warning text. Pressure is checked BETWEEN commands,
+not continuously inside e2fsck, and filesystem operations have no guaranteed
+bandwidth cap. No bulk copy or transfer cap change is part of this step.
+
+It records `repair-started.json`, phase outputs/status/pressure and a successful
+`original-filesystem-validated.json` under private `/var/tmp/kuma-original-repair-*`.
+Any previous original repair attempt blocks a blind retry. Partial failure must
+be assessed using those logs; preserve the image and source ownership. It never
+mounts, starts Kuma, changes placement, or detaches. After success leave the
+source unmounted and Kuma stopped for controlled manual-ticket/CSI handoff,
+placement on proxmox3 and later readiness/data validation. No restore-to-new-PVC
+or database-file replacement is performed: proposed recovery is filesystem
+repair in place using the proven copy outcome, with the verified preservation
+image retained for rollback.
+
+Mocked execution checked preservation/working-validation gates, exact original
+target and phase order, approved flags only, and completion marker after all
+checks. Live dry run/execution of original repair pending; do not describe the
+original filesystem as repaired yet. All Kubernetes and approved standalone
+Docker maintenance states remain in effect.
+
+### Original Kuma filesystem repaired and validated — 19:53 UTC
+
+Operator executed original-volume repair with evidence at
+`/var/tmp/kuma-original-repair-20261118T195344656712Z`.
+Journal replay reported recovery; forced automatic repair and subsequent
+forced no-write check completed successfully, all five passes and no warning:
+17/65536 files, 24255/65536 blocks. `original-filesystem-validated.json` was
+written. Original remains unmounted and Kuma stopped. This is filesystem
+recovery, not repair of the underlying host/storage incident or restored
+replica redundancy. Preservation image remains unchanged. No copy/cap change
+occurred during the repair.
+
+Prepared `restore-kuma-service.py`:
+
+```bash
+sudo python3 restore-kuma-service.py
+sudo python3 restore-kuma-service.py --execute
+```
+
+Dry-run requires exact original repair marker and current original-volume
+source guards. It prints placement/ticket/start changes. Execution uses default-
+no dialog (or explicit --yes), verifies maintenance and source guards again,
+saves exact deployment and attachment originals under private
+`/var/tmp/kuma-service-restore-*`, and logs requested/confirmed handoff steps.
+It preserves existing nodeSelectors while adding hostname proxmox3, removes
+only podAffinity (retaining other affinity), keeps zero replicas during placement,
+and removes ONLY `longhorn-api-kuma-validation-20261118` from the attachment.
+It waits for normal detach with empty tickets/node references and device
+removal; any other ticket blocks, and no force-detach is used. Then it verifies
+Kuma Bundle still paused, starts one replica, waits up to 180 seconds for
+rollout, and confirms a single intended-PVC consumer on proxmox3 and volume
+attached there. Success marker `service-started.json` is readiness/placement
+only: inspect application logs, login/data and notifications separately.
+
+Kuma startup resumes normal configured monitoring/notifications while other
+applications are still stopped; this is explicit in plan/confirmation. It
+never changes database files, starts another application, unpauses Fleet,
+uncordons the old node or changes desired Longhorn replica count 1. A previous
+handoff attempt blocks blind rerun. Partial failure must be assessed from saved
+state/logs. Do not automatically restart an old-source instance.
+
+Kubernetes restoration now supports optional `--keep-recovered-kuma` ONLY for
+restore mode: preserves a deliberate one-replica recovered Kuma instead of
+requiring its original temporary zero count. It requires the separate verified
+startup marker, actual ready replica 1 pinned to proxmox3 and live attachment
+there; original baseline is unchanged. Other originally zero workloads stay
+zero. Use this only AFTER separate Kuma service validation:
+
+```bash
+sudo python3 kuma-recovery-maintenance.py restore --keep-recovered-kuma
+sudo python3 kuma-recovery-maintenance.py restore --keep-recovered-kuma --execute
+```
+
+Do not restore unrelated apps yet: first execute/review Kuma handoff and
+validate actual service/data. Restore standalone Docker separately from its
+saved baseline after Kubernetes/application recovery as appropriate. Persistent
+Kuma placement and Fleet reconciliation remain follow-up; live placement patch
+is not Git persistence. Do not unpause Kuma until intended chart values are
+reviewed. Mocked handoff tests verified selector/other-affinity preservation,
+exact named-ticket removal, normal detach before start, success marker and
+retained Fleet pause; existing maintenance regression tests still pass.
+Live handoff execution pending.
+
+### Kuma service recovered on proxmox3 — 19:57:52 UTC
+
+Operator handoff evidence:
+`/var/tmp/kuma-service-restore-20261118T195711594510Z`.
+Placement confirmed at 19:57:11.665262 UTC; normal detach/device removal at
+19:57:15.620661 UTC after removing only the validation ticket; one-replica
+startup requested at 19:57:15.744604 UTC. Rollout succeeded and
+`kuma_ready_on_proxmox3` was logged at 19:57:52.026455 UTC for
+`uptime-kuma-77dc9cb569-ns26c`.
+
+Operator startup logs: Kuma 1.23.17 connected successfully to SQLite in WAL
+mode, schema version 10 matched latest and no patch was needed, server listening
+on 3001. No database/filesystem error appears in supplied startup output.
+`Failed to start nscd` did not prevent serving/readiness. Rancher monitor 503
+is consistent with Rancher still stopped in maintenance. Proxmox2-old port 443
+ECONNREFUSED is a separate endpoint/service finding, not evidence of renewed
+SQLite corruption; do not attribute or repair it without inspection.
+Actual UI login/visible monitors/notification configuration still require
+operator confirmation; working-copy counts (9 monitors, 1 user) are recorded
+above. Configured monitors/notifications have resumed; unrelated apps remain
+stopped.
+
+Next restore unrelated Kubernetes workloads gradually while preserving deliberate
+Kuma startup AND Longhorn incident pause:
+
+```bash
+sudo python3 kuma-recovery-maintenance.py restore --keep-recovered-kuma --keep-longhorn-paused --execute
+```
+
+Added `--keep-longhorn-paused` for restore mode only. It retains the saved
+maintenance pause of fleet-local/longhorn and logs the intentional difference
+from its original unpaused baseline, pending review of manager maintenance
+toleration/OnDelete and chart reconciliation effects. It does not modify the
+saved original. Kuma remains paused from its pre-maintenance baseline. Other
+schedules/pauses/counts restore from the saved baseline; Filebot stays zero.
+This avoids immediately reconciling away incident manager changes. Restore
+databases before frontends and wait for rollout; abort on high local pressure
+or failures, and inspect rather than bypass guards. No copying is active.
+Peer I/O still requires separate observation during restoration.
+
+Regression tests covered database-before-frontend restoration, explicit
+marker/ready/placement/storage validation for keeping Kuma at 1, retained
+Longhorn pause, and restored other saved replicas. Live Kubernetes restoration
+not yet reported. Standalone Docker remains stopped/restart-disabled until
+separate restoration. Placement persistence in Git, deliberate reconciliation,
+Longhorn redundancy and underlying incident diagnosis remain follow-up work.
