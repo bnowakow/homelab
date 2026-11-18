@@ -19,6 +19,35 @@
 - Traefik second replica remains blocked by host-port collision. No unsafe port or replica adjustment performed.
 - No PVC copy migration or transfer-cap change was performed.
 
+## Third control-plane node plan — proxmox5
+
+To make evacuation of `proxmox2-old` safe, prepare `proxmox5` as a third
+k3s server with embedded etcd, provisioned by Ansible from the NAS. This node
+does **not** need a Longhorn data disk and should be dedicated to
+control-plane/etcd duties. It must have reliable low-latency connectivity to
+the existing k3s servers and a compatible k3s configuration.
+
+Keep application workloads and Longhorn replicas off the new node. Before
+joining it, prepare the intended taint/labels and verify that Longhorn's node
+and disk scheduling rules will not create a disk or replica there. After it
+joins, verify three healthy etcd voters and API readiness before taking any
+action against `proxmox2-old`:
+
+```sh
+kubectl get nodes -o wide
+kubectl get pods -n kube-system -o wide
+kubectl get --raw='/readyz?verbose'
+```
+
+The third node provides quorum protection; it does not repair the failed
+NVMe, `emergency_ro` filesystems, stale container tasks, or degraded Longhorn
+volumes on `proxmox2-old`. Do not uncordon or power down `proxmox2-old` merely
+because `proxmox5` joined. First recover/validate Longhorn attachments and
+replicas, then remove the old etcd member only as a separate planned step.
+
+Provisioning status: **not yet performed in this recovery session**; the
+operator plans to run the existing Ansible provisioning from the NAS.
+
 ## Confirmed Kuma recovery
 1. Application task STOPPED with absent PID. Exact sandbox shim 2456872 matched full sandbox ID 33699980d0a00f76e82a499cc0a21fbd732eb5eb1b64d846572581bede456107; child tree contained only pause 2456965 and shim threads.
 2. Guarded SIGTERM to that shim removed shim and pause. No k3s restart or SIGKILL.
