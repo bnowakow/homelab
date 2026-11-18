@@ -44,3 +44,21 @@ Export recover-stale-app-shims.py from this ConfigMap. Run sudo python3 recover-
 - Restore Fleet reconciliation carefully, preserving previously disabled applications. Do not uncordon proxmox2-old until repair is validated.
 - Establish reliable monitoring/log rotation and investigate original storage/runtime outage and Proxmox4 separately.
 - Any future PVC copy migration MUST follow longhorn/README-5-pvc-migration-maintenance.md: save replicas/schedules, pause reconciliation, stop applications cluster-wide, verify stopped, retain essential infrastructure, log copying and every requested/confirmed cap change, validate and restore gradually. This is mitigation for prior severe I/O incidents, not proof of hardware repair.
+
+## Follow-up handoff — 2026-11-18 after 15:50 UTC
+
+The operator applied the manager-only maintenance toleration with
+`allow-longhorn-manager-maintenance.py`. Fleet's Longhorn Bundle is paused and
+manager strategy is OnDelete; replacement manager on proxmox2-old is 2/2 Ready.
+The instance-manager pod is still absent: its CR reports error and explicitly
+identifies the Kubernetes cordon as the creation blocker. Attached volumes on
+proxmox3 report degraded; Kuma's volume reports attaching/unknown. Recovery is
+incomplete. Current apps-* pods have zero matching maintenance tolerations;
+controller templates and other placement paths remain to be assessed before
+any controlled uncordon. No uncordon, global taint setting change or Kuma
+restart was reported.
+
+See [the detailed handoff](longhorn-shim-recovery-2026-11-18.md#handoff-to-codex-on-proxmox2-old--2026-11-18-after-1550-utc)
+for exact backup/log location, timestamps, observed settings, source-confirmed
+cordon behavior and next checks. These observations supersede earlier status
+snapshots above; do not assume the cluster still has that exact state.
