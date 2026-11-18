@@ -221,3 +221,18 @@ shutdown, reconciliation controls, saved state, verified stop, transfer-cap
 records and gradual restoration in
 [the required maintenance procedure](../longhorn/README-5-pvc-migration-maintenance.md)
 apply before copying.
+
+## Control-plane handoff update
+
+`proxmox5` (`10.0.0.80`) was added as a third embedded-etcd server. Etcd
+membership was verified from `proxmox3`: `proxmox2-old`, `proxmox3`, and
+`proxmox5` are all started non-learners/voters. This removes the two-voter
+quorum blocker for a future `proxmox2-old` maintenance window.
+
+The first proxmox5 k3s starts failed because `egress-selector-mode` differed
+from the existing servers. It later started successfully and promoted its
+etcd learner, but `proxmox5` still did not appear as a Kubernetes `Node` even
+though `k3s.service` was active. It has no Longhorn node or workload pods by
+design. Follow-up must inspect local kubelet/agent registration and Ansible
+configuration; do not create a Node object manually or remove proxmox2-old
+from etcd based only on the healthy member list.

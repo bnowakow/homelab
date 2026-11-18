@@ -48,6 +48,58 @@ replicas, then remove the old etcd member only as a separate planned step.
 Provisioning status: **not yet performed in this recovery session**; the
 operator plans to run the existing Ansible provisioning from the NAS.
 
+## Proxmox5 handoff findings — 2026-11-18
+
+The operator provisioned `proxmox5` at `10.0.0.80` and verified etcd from
+`proxmox3`. The cluster currently has three **started, non-learner etcd
+members**:
+
+| Name | Peer | Client | State |
+| --- | --- | --- | --- |
+| `proxmox2-old-42c02ed9` | `10.0.0.72:2380` | `10.0.0.72:2379` | started voter |
+| `proxmox3-cdccb8cb` | `10.0.0.50:2380` | `10.0.0.50:2379` | started voter |
+| `proxmox5-a5d14641` | `10.0.0.80:2380` | `10.0.0.80:2379` | started voter |
+
+This satisfies the etcd quorum-protection requirement for later maintenance
+of `proxmox2-old`. It does not by itself repair Longhorn or authorize shutting
+down the old node.
+
+### Proxmox5 k3s registration issue
+
+The first `proxmox5` k3s starts failed repeatedly with:
+
+```text
+critical configuration mismatched: egress-selector-mode
+failed to bootstrap cluster data: failed to validate server configuration
+```
+
+Later, at approximately 17:41:44 CET, k3s started successfully, received an
+etcd snapshot, promoted `proxmox5` from learner to voter at approximately
+17:42:00, and reported `ETCD server is now running` / `k3s is up and running`.
+The service command is `/usr/local/bin/k3s server`; the inspected systemd
+environment files were empty and no `--disable-agent` option was found in the
+reported service arguments.
+
+Despite the successful server startup, `proxmox5` still does not appear in
+the Kubernetes `Node` list. `sudo k3s kubectl get node proxmox5` returns
+`NotFound`, while the service is active. No Longhorn node or pod is scheduled
+there, which is intentional. The unresolved follow-up is local kubelet/agent
+registration, not etcd membership. Inspect the proxmox5 k3s journal for
+kubelet/node-registration errors and verify the presence of the agent
+kubeconfigs and kubelet process before changing cluster state:
+
+```sh
+sudo pgrep -af 'kubelet|k3s agent|k3s server'
+sudo ls -l /var/lib/rancher/k3s/agent/
+sudo journalctl -u k3s --since '17:42:00' --no-pager | \
+  grep -Ei 'kubelet|node|register|forbidden|unauthorized|error|failed'
+sudo test -s /var/lib/rancher/k3s/agent/kubelet.kubeconfig && \
+  echo kubelet-config-present
+```
+
+Do not create a Kubernetes Node object manually. Resolve the registration
+through the Ansible/k3s configuration in the separate proxmox5 session.
+
 ## Confirmed Kuma recovery
 1. Application task STOPPED with absent PID. Exact sandbox shim 2456872 matched full sandbox ID 33699980d0a00f76e82a499cc0a21fbd732eb5eb1b64d846572581bede456107; child tree contained only pause 2456965 and shim threads.
 2. Guarded SIGTERM to that shim removed shim and pause. No k3s restart or SIGKILL.
