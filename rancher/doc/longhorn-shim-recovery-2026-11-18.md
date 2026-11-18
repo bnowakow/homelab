@@ -26,3 +26,49 @@ Kuma remains disabled: its latest volume attachment is still proxmox2-old. Resto
 Any future PVC data-copy migration requires the cluster-wide application shutdown procedure in longhorn/README-5-pvc-migration-maintenance.md, saved replicas/schedules, blocked reconciliation, verified stop, logged cap changes and gradual restoration. This script performs no data copy or transfer-cap changes.
 
 The underlying method worked for Kuma and eight apps; live execution of this infrastructure variant is NOT yet validated.
+
+## Allow manager scheduling during maintenance
+
+`allow-longhorn-manager-maintenance.py` prepares the narrow manager-template
+change inferred from this incident: tolerate
+`maintenance=storage-repair:NoSchedule` while proxmox2-old stays cordoned and
+tainted. The earlier sudo-session discussion was unavailable when preparing
+this script; its exact agreement has not been verified.
+
+```bash
+sudo python3 allow-longhorn-manager-maintenance.py
+sudo python3 allow-longhorn-manager-maintenance.py --execute
+# Only for explicit confirmation without an interactive dialog terminal:
+sudo python3 allow-longhorn-manager-maintenance.py --execute --yes
+```
+
+The script requires the expected node cordon/taint, DaemonSet
+`longhorn-system/longhorn-manager`, and Fleet Bundle `fleet-local/longhorn`.
+Review the dry-run patch first. It preserves existing tolerations, pauses the
+Bundle and atomically changes the DaemonSet strategy to `OnDelete` with the
+new toleration, avoiding an automatic rollout of healthy managers. Resource
+version tests reject concurrent edits. Fleet pause does not cancel an already
+running Helm operation; inspect active reconciliation before execution.
+
+Before mutation, originals and the patch are saved in a private
+`/var/tmp/allow-longhorn-manager-maintenance-TIMESTAMP` directory. The action
+log distinguishes requested and verified changes. On failure, partial changes
+may remain; consult the backups/log before retrying. Repeated execution is a
+no-op when the exact toleration already exists; this does not establish Fleet
+pause or manager readiness.
+
+This changes only the manager template, not Longhorn's global taint-toleration
+setting or the instance-manager/CSI templates. Existing manager pods are not
+patched or deleted. A missing manager pod can be created from the new template;
+a stale or terminating old pod may still block replacement and needs separate
+guarded recovery. Check the replacement pod's tolerations, placement and
+readiness, manager logs, Longhorn node/disk status and volume state afterward.
+A confirmed template patch is not proof of a ready manager or repaired storage.
+
+Fleet remains paused and the strategy remains `OnDelete` deliberately. After
+recovery, compare `bundle-before.json` and `daemonset-before.json` against live
+state. Restore the saved strategy only when a possible rollout is acceptable;
+restore the prior Bundle pause state only after reviewing intended Git/Helm
+values and their reconciliation effects. Preserve a Bundle that was already
+paused. This temporary script does not modify Git values, uncordon the node,
+restart k3s, detach volumes, copy PVC data or change transfer caps.
