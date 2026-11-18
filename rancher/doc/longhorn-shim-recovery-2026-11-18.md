@@ -707,3 +707,237 @@ transfer-cap change occurs here. Tests modeled a controller resetting suspend
 when it applies the generated schedule and verified suspension happens after
 that reset. Live execution of this fix is pending. Applications remain in
 maintenance; no copy or automatic restoration should occur on this failure.
+
+### 18:34–18:35 UTC both-host readiness; recurring suspension resets again
+
+Operator supplied both readiness summaries:
+
+- proxmox2-old `/var/tmp/kuma-copy-readiness-proxmox2-old-20261118T183408660129Z`:
+  PSI some/full avg10 zero in all three samples, k3s NRestarts=114 unchanged,
+  active service/start identity stable. /var/lib/longhorn rw, 81618059264 bytes
+  available; /var/tmp backing filesystem 46852734976 bytes available. No
+  required collector failures; maintenance verification is intentionally only
+  run on proxmox3.
+- proxmox3 `/var/tmp/kuma-copy-readiness-proxmox3-20261118T183440655311Z`:
+  PSI avg10 some/full <=0.01, k3s NRestarts=139 unchanged, active/start stable.
+  /var/lib/longhorn rw with 80579694592 available bytes; /var/tmp backing
+  filesystem 274101960704 available bytes. Verification failed again because
+  generated `nas-daily-backup.spec.suspend` reverted to false.
+
+The prior schedule-plus-suspend fix did not make suspension persistent. Do not
+keep reapplying a transient flag or claim it is confirmed indefinitely.
+Updated verification to accept scheduling exclusion through the deferred
+annual schedule ONLY for a known baseline Longhorn-generated CronJob whose
+ownerReference points to the exact baseline RecurringJob UID, whose parent
+`spec.cron` matches `0 0 1 1 *`, and whose generated `spec.schedule` matches it
+as well. The November-only maintenance date gate remains; all other CronJobs
+must remain suspended. Active Jobs/Job pods and unrelated drift still block.
+This is scheduling deferral, not a confirmed persistent suspension. It records
+`backup_suspension_not_persistent_deferred_schedule_confirmed` with requested
+suspend=true, actual suspend value and live confirmed schedule. Original
+schedule/suspension restoration remains unchanged.
+
+Run the corrected verifier rather than repeating shutdown or full host probes:
+
+```bash
+sudo python3 kuma-recovery-maintenance.py verify
+```
+
+Tests confirmed acceptance of a reset suspend flag only when deferred parent,
+generated schedule and ownership agree, and refusal for drift in any of those.
+Physical pool headroom/health, recent kernel-log review and source exclusion
+remain separate gates before transfer. Both hosts' filesystem free space is
+not a physical pool assessment. No data copied and no cap requested/applied.
+
+### 18:38 UTC maintenance passed; preservation-image worker prepared
+
+Operator verification confirmed deferred backup schedule with actual suspend
+false at 18:38:19.601391 UTC, then
+`shutdown_verified_not_yet_copy_ready` at 18:38:25.190685 UTC. This confirms
+the explicit schedule-based guard; it does not claim persistent suspension.
+
+Operator pool reports: proxmox2-old rpool ONLINE, all pools healthy,
+54696001536 physical bytes free, 78% allocated; proxmox3 rpool ONLINE,
+289796747264 physical bytes free, 42% allocated. These satisfy the observed
+headroom requirement for a 268435456-byte preservation image plus working
+copy, but do not diagnose or repair the original storage errors. Host readiness
+results and maintenance baseline remain linked above.
+
+Prepared `preserve-kuma-recovery-image.py` on proxmox3:
+
+```bash
+sudo python3 preserve-kuma-recovery-image.py
+sudo python3 preserve-kuma-recovery-image.py --execute
+```
+
+Dry-run performs live guards without copying data. It requires all earlier
+helpers alongside it, root on proxmox3, live maintenance verification, exact
+volume UID/size/ext4 UUID, desired replicas 1, only the named validation ticket,
+exactly the surviving running replica on proxmox3, exactly one running engine
+there with sole RW replica, no matching device mounts in visible process
+namespaces or holders, sufficient local destination space, and active k3s/low
+I/O PSI on both hosts. Peer monitoring uses existing trusted noninteractive
+SSH, default `sup@10.0.0.72`, and fixed read-only Python/systemctl/proc reads.
+Override account with `--peer-ssh` only for an existing authorized account on
+proxmox2-old; host identity is checked. It never disables SSH host verification,
+automatically enrolls keys, uses remote sudo or silently skips a failed peer.
+If authentication/trust blocks, resolve the existing access rather than
+starting an unmonitored copy.
+
+Execute asks with default-no dialog (or explicit `--yes`) and rechecks guards.
+It reads the source device only with rb/O_RDONLY, writes a new private
+`/var/tmp/kuma-preservation-TIMESTAMP/source-preserved.img`, computes SHA-256
+while copying, then rereads the image and compares SHA-256. Fixed cap is
+1048576 bytes/s with 65536-byte chunks, applied to BOTH copy and checksum
+verification. No catch-up bursts after delayed guard calls. Expected bulk
+read time is at least 512 seconds plus API/SSH/monitor overhead; total workflow
+has a 30-minute deadline checked between chunks/guards. Kernel-blocked reads
+cannot be guaranteed interruptible by this userspace deadline.
+
+It logs `cap_requested` separately from `cap_confirmed` with worker PID/chunk
+pacing before first data read. `actions.jsonl` and `cap-changes.jsonl` retain
+timestamps, previous/new bytes/s, reason, observed pressure and outcome.
+No automatic rate reductions: high pressure stops the worker, with the
+confirmed transition to zero logged after handles close. Both-host PSI/k3s
+identity checks run between chunks about every five seconds; source attachment/
+mount/engine guards about every 15 seconds and full maintenance verification
+about every 30 seconds. Guard execution pauses copying. On failure/interrupt,
+partial image is retained without `verified.json`; do not use it for recovery
+or resume blindly. No copy has yet been reported and no live transfer cap
+has yet been requested/applied by an executed worker.
+
+After a complete matching checksum, image is chmod 0400 and `verified.json`
+records bytes/hash/source identity. This is a local preservation copy on the
+same physical host/pool, not protection against loss of that pool or an
+independently validated database backup. Keep it unchanged; journal replay,
+filesystem repair, database/WAL recovery and integrity checks belong on a
+separate working image/files after a capped copy of this preservation image.
+The source remains attached, unmounted, and application stopped throughout.
+No extraction/mount/source repair/application start occurs in this script.
+
+Tests checked fixed-cap pacing with a simulated clock, exact copied bytes and
+hash, premature EOF rejection and monitor failure before first copy. Dry-run
+and live execution remain pending. API/SSH and storage reads are bounded where
+possible; source read consistency still depends on continued source-writer
+exclusion and no concurrent administrator operations. Preserve old-host source
+exclusion, review recent storage errors, and keep maintenance active throughout
+copying AND database validation. Restore only after workers are stopped and
+validation is complete or deliberately aborted.
+
+Preservation dry run initially failed before any copying: root's SSH context
+had no trusted ED25519 key for 10.0.0.72. Existing sup known_hosts contains
+matching entries for both 10.0.0.72 and proxmox2-old. Updated the worker to run
+ONLY the fixed remote monitoring SSH command via `runuser -u SUDO_USER -- ssh`
+(default sup when no SUDO_USER); root remains responsible for local device
+reads. `--peer-local-user` can select an existing non-root local account.
+This uses that account's existing trust/authentication rather than creating
+root trust entries or bypassing checking. BatchMode and StrictHostKeyChecking
+remain enabled, and no keys are enrolled/copied. Authentication still requires
+working existing credentials; any failure blocks the dry run before copying.
+Re-run the same dry-run command. No live cap was requested/applied and no data
+was copied by the failed attempt.
+
+### Preservation worker running — copy complete, checksum verification pending
+
+Operator supplied live output from
+`/var/tmp/kuma-preservation-20261118T184540364827Z`.
+At 18:45:40.365263 UTC cap 0 -> 1048576 bytes/s was requested; at
+18:45:49.640159 UTC worker PID 1510424 confirmed live fixed pacing with
+65536-byte chunks before first source read. Both-host some/full avg10 PSI was
+zero at cap request/confirmation and every supplied observation through
+18:51:59 UTC. No cap adjustment or automatic reduction was reported.
+The worker's `actions.jsonl` and `cap-changes.jsonl` are the cap records.
+
+At 18:51:46.750248 UTC `copy_complete` recorded 268435456 bytes over
+357.09955961303785 seconds, source-stream SHA-256
+`3470b1fd2130d7b2ed136725941695177146a753f9593436af8460ce8d1666a1`.
+The image reread/checksum-verification phase then began under the same cap.
+This is NOT yet a verified preservation image: wait for `image_verified` and
+`verified.json` plus the final idle/cap-zero confirmation. Keep applications
+stopped and do not alter source/image or start a second worker meanwhile.
+
+### 18:57:54 UTC preservation verified; working-copy mode prepared
+
+Operator completion output confirms `image_verified` at 18:57:54.356026 UTC:
+268435456 bytes, SHA-256
+`3470b1fd2130d7b2ed136725941695177146a753f9593436af8460ce8d1666a1`,
+source UUID `cb578054-4075-47b7-afe3-c1f8c31381da`, sourceWritten=false,
+mountOrRepairAttempted=false. Image and marker are under
+`/var/tmp/kuma-preservation-20261118T184540364827Z`.
+At 18:57:54.358181 UTC cap 1048576 -> 0 was confirmed with handles closed,
+worker idle, local/peer PSI zero. The supplied late verification observations
+had a brief local some/full avg10 rise to 0.14 at 18:57:05 UTC, then declined
+to zero; peer stayed zero. No rate change/reduction occurred before final stop.
+The preservation worker is finished. Database integrity is still unverified.
+
+Added `--working-copy` to the same capped worker:
+
+```bash
+sudo python3 preserve-kuma-recovery-image.py --working-copy
+sudo python3 preserve-kuma-recovery-image.py --working-copy --execute
+```
+
+This selects the latest verified `kuma-preservation-*` directory, requires a
+regular 256 MiB preservation image without write permission bits, verifies its
+marker matches the exact reported UUID/size/SHA-256 checkpoint, and reads only
+that file for the copy. It still requires live maintenance/host/attachment
+monitoring. It creates a NEW private `kuma-working-TIMESTAMP/working.img`,
+checks copied content hash against the confirmed preservation hash, rereads
+and verifies the new file, and leaves the working image mode 0600 for later
+explicit recovery operations. The preservation image stays read-only and is
+never the target of journal replay or repair. All pacing and cap-change logs
+remain as for preservation; the new worker starts with a separate requested/
+confirmed 0 -> 1 MiB/s cap and returns to zero when idle. No working-copy live
+cap or data transfer has yet been reported.
+
+This is a full capped copy, not a hard link or a silent unthrottled fallback.
+Expect roughly the same 12-minute copy-plus-verification duration as the first
+worker, including monitoring overhead. Keep applications stopped throughout.
+The initial dry run only reads guards/metadata. Tests covered source checkpoint
+selection, rejection of writable or wrong-hash preservation metadata, and exact
+capped-copy bytes/hash/pacing. Live working-copy execution is pending. No
+filesystem repair, journal replay, mount, SQLite WAL recovery or app start has
+yet been performed; those will use the verified working image, never the
+preservation image or original device.
+
+### Working-copy worker stopped on pressure — 19:11:42 UTC
+
+Operator supplied failed working-copy execution under
+`/var/tmp/kuma-working-20261118T190817882610Z`.
+Cap requested at 19:08:17.885482 UTC, 0 -> 1048576 bytes/s, local/peer PSI
+zero. Worker PID 1604871 confirmed live pacing at 19:08:27.156759 UTC, chunk
+65536 bytes, before reading. Local full PSI briefly rose to 0.45 at
+19:09:59 UTC and declined; from 19:11 UTC pressure increased on both hosts.
+At 19:11:42.066986 UTC observed local some=2.68/full=2.25 and peer
+some=1.04/full=0.97 (avg10). Local full exceeded the 2 threshold.
+`transfer_failed` at 19:11:42.068959 UTC reported high I/O pressure;
+at 19:11:42.070927 UTC cap 1048576 -> 0 was confirmed, handles closed and no
+further reads. There was no live reduction to a lower nonzero cap. The worker's
+`actions.jsonl` and `cap-changes.jsonl` retain request/confirmation, observed
+pressure, stop reason and outcome. The working image is partial and NOT
+verified; do not mount, repair, recover SQLite from it or resume blindly.
+
+The verified preservation image remains unchanged under
+`/var/tmp/kuma-preservation-20261118T184540364827Z`. The original device was
+not the source of this working-image copy and no source filesystem repair or
+mount occurred. No proof that this small local copy caused the cross-host I/O
+pressure, or that reducing throughput would resolve it, has been established.
+Keep applications in maintenance and investigate before choosing a retry.
+
+Prepared read-only diagnostic, to run on BOTH storage hosts:
+
+```bash
+sudo python3 diagnose-kuma-io-pressure.py
+```
+
+It samples PSI and /proc process I/O deltas over ten seconds, reports the
+largest observed readers/writers with process names/cgroups (not command-line
+arguments), and collects bounded ZFS/device I/O reports when tools exist,
+recent kernel logs, k3s status, API readiness, pod and Longhorn engine/replica/
+volume state. On proxmox3 it re-verifies maintenance. Evidence is private
+under `/var/tmp/kuma-io-diagnostic-HOST-*`. Process counters may miss exited
+or newly created tasks and cannot by themselves identify underlying ZFS or
+hardware causes. No data copying, cleanup, cap change, filesystem change,
+application restoration or restart occurs. Syntax checked; live collection is
+pending. Review summaries plus kernel/Longhorn evidence before resuming any
+worker. Preserve the partial directory/logs as failed-attempt evidence.
