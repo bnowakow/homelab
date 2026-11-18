@@ -941,3 +941,100 @@ hardware causes. No data copying, cleanup, cap change, filesystem change,
 application restoration or restart occurs. Syntax checked; live collection is
 pending. Review summaries plus kernel/Longhorn evidence before resuming any
 worker. Preserve the partial directory/logs as failed-attempt evidence.
+
+### Post-abort diagnostics: pressure settled; standalone Docker writers discovered
+
+Operator diagnostics:
+
+- proxmox3 `/var/tmp/kuma-io-diagnostic-proxmox3-20261118T191317456306Z`:
+  PSI avg10 zero across the sample; k3s NRestarts=139 unchanged, API readiness
+  and Kubernetes maintenance verification passed. Largest sampled I/O was a
+  kernel worker and k3s; this post-event sample does not identify the earlier
+  pressure source. Later pool intervals were low I/O. The first zpool iostat
+  row is a historical average, not current interval activity.
+- proxmox2-old `/var/tmp/kuma-io-diagnostic-proxmox2-old-20261118T191642246593Z`:
+  PSI avg10 zero, k3s NRestarts=114 unchanged and API readiness passed. However,
+  process I/O includes PostgreSQL PID 3572997 in standalone Docker scope
+  `docker-efd0325fc503fb26be5449e811ae8af4416b29b9d3a4c16ea7c23fdb95fd0e6b.scope`
+  (1220608 bytes written during the sample) and Java PID 3572727 in
+  `docker-ff5164114c53e2fc55d52a6de2eb14cd0087d592c5e33c81016f993298b870f7.scope`
+  (8192 bytes written). These processes were not covered by Kubernetes-only
+  shutdown verification. Container identities/dependencies remain unknown;
+  they are not yet established as the cause of the pressure.
+
+Do not retry copy just because current PSI is zero. Identify standalone Docker
+containers on proxmox2-old (and check the other storage host for this coverage
+class), determine whether they are application or essential-infrastructure
+services, save current running/restart/orchestration state, and handle relevant
+application shutdown/restoration deliberately before another attempt. Do not
+stop unnamed database/Java processes or all Docker containers blindly. Existing
+Kubernetes maintenance state stays in place. No new cap reduction/change or
+retry has been requested/applied. The verified preservation image remains
+unchanged and the aborted working image remains unverified.
+
+Next read-only identification on proxmox2-old:
+
+```bash
+sudo docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'
+```
+
+Do not publish full Docker inspect output: environment/configuration may
+contain credentials. Inspect only selected identity/state/restart-policy,
+compose/orchestration labels and mount fields when planning further actions.
+
+### Standalone Compose scope identified; user authorizes temporary pause
+
+Operator identified the non-k3s containers on proxmox2-old:
+
+- `home-assistant-watchdog-springboot-1`, ff5164114c53, home-assistant-watchdog:local;
+- `home-assistant-watchdog-postgres-1`, efd0325fc503, postgres:latest;
+- `scrutiny`, 01af255a85bb, ghcr.io/analogj/scrutiny:master-omnibus.
+
+These are separate Docker Compose services, not missed k3s pods. Their I/O
+is relevant to the host, but no causal link to the spike is established.
+The user explicitly said they can be stopped if that helps. Prepared the
+incident-specific `pause-kuma-host-compose.py` on proxmox2-old:
+
+```bash
+sudo python3 pause-kuma-host-compose.py plan
+sudo python3 pause-kuma-host-compose.py stop --execute
+sudo python3 pause-kuma-host-compose.py verify
+```
+
+It saves only selected non-secret identity/running/restart-policy/Compose-label
+fields under private `/var/tmp/kuma-host-compose-TIMESTAMP/baseline.json`.
+The baseline is reused rather than overwritten; exact full IDs are checked
+against the original incident prefixes. Auto-remove containers, replacement
+IDs or unexpected policy changes block. Stop disables Docker auto-restart on
+all three, confirms that change, then gracefully stops watchdog application,
+Scrutiny and PostgreSQL in that order. It uses Docker's configured stop signal
+and timeout -1 so Docker does not escalate to SIGKILL; the client call is
+bounded to 140 seconds and refuses to proceed if termination is not confirmed.
+Configured kill signals are rejected. Container records, volumes and data are
+retained. Logs distinguish requested changes from observed stops/policies.
+External Compose/systemd/operator start actions are not disabled: do not run
+Compose up or restart these stacks during maintenance, and investigate any
+reappearance before transfer. No blanket Docker shutdown occurs.
+
+Restoration for after recovery validation or deliberate abort:
+
+```bash
+sudo python3 pause-kuma-host-compose.py restore --execute
+```
+
+It starts originally running PostgreSQL first, waits for its Docker health
+check to be healthy, then starts Scrutiny and watchdog, preserving containers
+originally stopped. Finally restores exact saved restart policies and verifies
+running/policy state. Missing database health check blocks automatic watchdog
+startup until separately assessed. The operator must also verify application
+functionality afterward. This is separate from Kubernetes restoration; both
+restoration baselines must be preserved. Default-no dialog is used for mutation,
+with explicit `--yes` fallback. No new copy/cap change is triggered.
+
+Mocked tests covered saving baseline, restart disable before stops, application
+before database stop, and absence of kill/deletion commands. Docker's documented
+negative stop timeout avoids automatic SIGKILL:
+[Docker stop documentation](https://docs.docker.com/reference/cli/docker/container/stop/).
+Live execution is pending. After verified pause, sample pressure/host readiness
+again before deciding on a new working-copy attempt; keep the verified
+preservation image and failed partial attempt unchanged.
