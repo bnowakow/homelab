@@ -1,5 +1,443 @@
 # Longhorn stale infrastructure shim recovery — 2026-11-18
 
+## Temporary storage decision — 19 November 2026
+
+Operator decision: keep storage on proxmox3 for the time being. Defer rebuilding
+redundancy or returning proxmox2-old to storage scheduling. Retain the old
+Kubernetes node cordon/maintenance taint and Longhorn node/disk scheduling
+restrictions. Do not reduce desired replica counts merely to hide degraded
+status; Kuma remains at its existing desired count of one.
+
+This decision does not request eviction/deletion of the six existing RW copies
+on proxmox2-old or migration of those volumes. Leave those copies and etcd
+membership intact. Most attached volumes currently rely on a single running
+copy on proxmox3; this temporary arrangement does not provide host-failure
+redundancy. Retain preservation evidence and scheduled backups. Reassess storage
+placement separately before enabling rebuilds or retiring the old host.
+No live cluster changes were needed or performed for this decision.
+
+## Etcd membership verified — 19 November 14:46 UTC
+
+Operator-run evidence: `/var/tmp/etcd-membership-assessment-20261119T144605444504Z`.
+Three non-learner voters confirmed: proxmox2-old (10.0.0.72), proxmox5
+(10.0.0.80), and proxmox3 (10.0.0.50). All three endpoints healthy, no
+collector errors; all report revision 51060792, term 839, and applied/index
+56230083. Current leader is proxmox2-old. This supersedes the pending quorum
+check below. Proxmox5 participates in etcd despite absence from the supplied
+Kubernetes Node list; this does not make it a storage node.
+
+Snapshot health does not authorize removal/shutdown. Proxmox2-old still hosts
+six live volume replicas. Next choose and validate the second storage location;
+retain its cordon and Longhorn scheduling restrictions pending that plan.
+No cluster settings or membership were changed.
+
+## Redundancy/manager assessment confirmed — 19 November 14:29 UTC
+
+Private evidence:
+`/var/tmp/longhorn-redundancy-assessment-20261119T142900138581Z`.
+52 volumes total, 48 attached, 41 attached/degraded at desired=2 with one
+running/RW replica on proxmox3. Kuma is attached/healthy at desired=1 with one
+running/RW replica there. Six other attached volumes have desired=2 and two
+running/RW records across proxmox2-old/proxmox3: AdGuard config/data, Scrutiny
+config, Piwigo MariaDB, Jenkins data and DuckDNS config. Thus the old node still
+participates in live storage. Four detached/unknown volumes are Filebot's three
+claims and the historical Homer native-restore claim; their stopped replica
+records must be reviewed before any destructive retirement, not treated as loss
+or safe deletion from detached status alone.
+
+Both managers are Running and all containers Ready. Live DaemonSet strategy
+OnDelete, generation/observedGeneration=4, ready/available=2, updated=1;
+old-node manager revision 5844c5f77f and proxmox3 manager revision 6c64847c68.
+Template tolerates maintenance=storage-repair:NoSchedule. Different revisions
+explain the 1/2 updated condition under maintenance; no manager failure is shown.
+Longhorn Bundle is ACTUALLY UNPAUSED and NotReady with desired rollingUpdate
+maxUnavailable=100% drift; earlier assumptions of retained pause are superseded.
+Kuma Bundle is unpaused and Ready. Do not apply the reported desired strategy or
+restart healthy managers merely to clear Fleet's status. No strategy/pause/
+replica/scheduling change was performed during this assessment.
+
+Old Kubernetes node remains cordoned with maintenance and unschedulable taints;
+Longhorn node AND disk allowScheduling=false. Proxmox3 is untainted/schedulable.
+Only these two Kubernetes Nodes appear. Verify current etcd separately before
+planning removal/shutdown: prepared `check-etcd-membership.py` (sudo on proxmox3)
+uses existing k3s client certificates and etcdctl to list members, cluster
+endpoint health/status, with bounded calls and private logs. It never changes
+membership and requires three named voters/healthy endpoints for its positive
+marker; a negative/incomplete result is not permission to stop any voter.
+Syntax checked; live assessment pending. Three earlier voters were historical,
+not fresh quorum evidence. Missing proxmox5 Kubernetes registration does not
+prove its etcd voter is absent or healthy.
+
+Redundancy requires another validated storage location: either investigate and
+return the old storage host or provision replacement storage while retaining
+control-plane-only proxmox5's intended role. Operator preference remains pending
+from the earlier question. Do not automatically enable old scheduling, change
+Kuma replicas 1 -> 2 without a destination, delete existing/stopped replicas,
+uninstall Longhorn, or evacuate/shut down a host. Any data-copy migration must
+use a fresh cluster-wide maintenance baseline, verified stop and logged/live-
+confirmed caps; no such migration has started in this assessment phase.
+
+## Kuma Fleet placement live-validated — 19 November, 14:21:31 UTC
+
+Operator host dry-run passed full schema/render validation at 14:19 UTC, then
+execution temporarily paused Kuma at 14:20:10 UTC, natively applied only its
+Fleet Bundle, preserved GitRepo ownership/targets and original Bundle UID
+b3284191-c92a-4038-8041-e2fa8b9e1586, and unpaused Kuma at 14:20:12.988396 UTC.
+Fresh BundleDeployment applied/Ready, rollout, node/PVC/attachment and real
+/app/data mount checks passed. Both configured HTTPS ingress hosts returned
+302 under verified TLS at 14:21:31 UTC. Final success event:
+`kuma_git_placement_live_validated_commit_eligible` at 14:21:31.327284 UTC.
+
+The values file pins amd64/proxmox3, disables autogenerated PVC affinity, and
+retains one Recreate replica/existing claim. This changed Fleet bundle has
+now been applied/validated as required by fleet/AGENTS.md; review the matching
+local diff before committing. No commit/push occurred. Earlier schema/network/
+JSON-preview blockers are resolved on the operator host, not silently bypassed.
+Exact execution evidence directory was not in the supplied completion tail;
+use the path printed by that run or its private placement-validated.json and
+actions.jsonl rather than confusing it with a preview directory.
+
+Kuma Bundle is now deliberately unpaused. Longhorn settings/template/replica
+count and old-node maintenance controls were not modified; inspect their current
+state separately instead of assuming any prior pause persists. Preserve images
+and baselines. Remaining redundancy/root-cause/old-node/Traefik and final
+schedule checks are separate follow-up, not grounds to repeat recovery.
+
+## Kuma Fleet preview refusal: live Bundle already unpaused
+
+Operator `reconcile-kuma-placement.py` dry run refused at its initial guard:
+`Expected Kuma Bundle paused before controlled apply`. This occurred before
+render/native apply/unpause; no cluster change was made by that invocation.
+The assumption that the maintenance pause remained in place was stale; an
+external reconciliation or other action may have changed it, but cause is
+not established. Longhorn's current pause must not be inferred from Kuma's.
+
+Updated helper accepts either initial Kuma pause state, recording the original.
+For unpaused Bundles it requires a settled deployed Helm release and a single
+Ready BundleDeployment whose desired/applied IDs match, plus the actual healthy
+single PVC consumer on proxmox3. It no longer requires the live template already
+have the Git hostname pin before making that pin persistent; actual consumer
+placement/storage guards remain. Dry-run is still read-only. After explicit
+execution confirmation, it temporarily pauses ONLY Kuma with UID/resource-version
+tests, verifies pause, performs native paused Fleet apply, then verifies labels/
+targeting/pause and unpauses Kuma for validated reconciliation. Concurrent pause
+or deployment drift blocks. No Longhorn mutation is included or claimed.
+
+Mocked initially-paused and initially-unpaused workflows passed, including the
+pause-before-apply ordering and all postchecks. Repeat the same host dry run;
+full schema/live validation remains pending, so the Fleet values edit is still
+not ready for commit/push under fleet/AGENTS.md. Do not run a direct Helm upgrade
+or bypass guards to proceed. Evidence path is now printed before guards so a
+refusal can be inspected. Prior Kubernetes/service recovery remains confirmed;
+this is declarative reconciliation follow-up, not another PVC migration.
+
+## UI/data and post-restoration pressure confirmed; Git placement prepared
+
+Operator confirmed Kuma shows expected monitors/history. Post-Docker PSI was
+low on both hosts: proxmox3 some/full avg10 0.40/0.29; proxmox2-old 0.00/0.00.
+Service restoration and visible Kuma data recovery are confirmed. Notification
+send/functionality and standalone app end-to-end checks remain separate.
+
+Prepared Kuma Git values: disable chart autogenerated PVC affinity with
+podOptions.defaultAffinity=false and pin workload.main.podSpec.nodeSelector to
+amd64/proxmox3, retaining one Recreate replica and existing claim. Cached chart
+15.1.4 templates confirmed behavior offline. Full schema fetch failed because
+this sandbox cannot open network/DNS sockets; offline rendering skipped schema
+ONLY for local behavior inspection, not as live validation. No cluster mutation
+occurred. The values change remains UNAPPLIED/UNVERIFIED and must not be committed
+or pushed until fleet/AGENTS.md's native Fleet application/live checks pass.
+
+Prepared reconcile-kuma-placement.py for host-side full-schema preview and
+single-Bundle native Fleet apply, preserving GitRepo ownership labels/targeting
+and refusing unrelated prune scope or chart version changes. It applies paused,
+unpauses only Kuma, requires a new Ready/applied BundleDeployment, checks rollout,
+actual /app/data mount, volume attachment, node/claim and both HTTPS ingress
+hosts without insecure TLS flags. Longhorn remains paused and no replica/node
+maintenance changes occur. Mocked workflow tests passed; live dry run/execution
+pending. The concise quick handoff now consolidates current status rather than
+repeating superseded checkpoints; see it for commands and private evidence.
+
+## Latest checkpoint — service restoration completed, 19 November 14:02:54 UTC
+
+Operator closeout watch at
+`/var/tmp/kuma-closeout-watch-20261119T140054115534Z` confirmed the backup Job
+Complete, no active backup pods, stable active k3s identities and three low-PSI
+samples on BOTH hosts at 14:00:54, 14:01:24 and 14:01:54 UTC. Local some avg10
+was 0.01 then zero; local full and peer some/full were zero. No services were
+started by the watcher.
+
+Operator then restored the approved standalone containers on proxmox2-old from
+`/var/tmp/kuma-host-compose-20261118T192324749221Z`:
+
+- PostgreSQL start requested 14:02:40.808281 UTC; health/start confirmed
+  14:02:53.253685 UTC.
+- Scrutiny start confirmed 14:02:53.623777 UTC.
+- Watchdog Spring Boot start confirmed 14:02:53.969841 UTC.
+- Original running/restart states confirmed for watchdog at 14:02:54.080345 UTC,
+  Scrutiny at 14:02:54.211756 UTC, PostgreSQL at 14:02:54.363684 UTC.
+  All three original restart policies were unless-stopped.
+
+Thus Kuma recovery, Kubernetes saved-value restoration and standalone Docker
+restoration have completed according to supplied execution results. This
+supersedes earlier Docker-pending/running-restoration statements below. No
+copy worker/cap is active; verified preservation and private baselines remain
+retained. The last both-host low-pressure watch preceded Docker startup;
+post-start pressure and application functionality have not yet been reported.
+PostgreSQL readiness was checked; watchdog/Scrutiny started state is not a full
+end-to-end functional validation.
+
+Remaining closeout/follow-up (not grounds to repeat recovery):
+
+- Confirm Kuma UI/login/history/notification configuration and standalone
+  application functionality; check post-start both-host pressure/API stability.
+- Keep Kuma/Longhorn Fleet pauses pending deliberate reconciliation review and
+  persistent placement/configuration. Preserve Filebot's original zero.
+- Verify final StatefulSet/backup schedules/reconciliation and the previously
+  unresolved Traefik 1/2 replica issue. Rancher was subsequently confirmed 3/3.
+- Review Longhorn redundancy and desired replica count 1 for Kuma separately;
+  do not raise it blindly or uncordon the old node. Preserve the old-node
+  maintenance taint and Longhorn node/disk scheduling controls as last observed.
+- Underlying storage/runtime failure cause remains unproven. Successful service
+  recovery, backup completion and low PSI are not proof of hardware repair.
+- Preserve private images/baselines securely outside Git, and commit the updated
+  scripts/documentation. A Git clone does not include rollback images/data.
+
+Do not rerun shutdown, original repair, copies or completed restore commands
+merely for health verification. No storage/global-setting mutation or transfer-
+cap change occurred during Docker restoration. Full chronological evidence and
+historical command plans follow below; use this checkpoint as the latest state.
+
+## Latest supplied checkpoint: daily backup complete, Docker restore pending
+
+Operator reported `nas-daily-backup-29917440` **Complete 1/1**, duration **82m**,
+age 83m. Exact observation/completion wall-clock time was not supplied.
+Proxmox3 PSI at that check: some avg10=0.12/avg60=2.11/avg300=3.28;
+full avg10=0.01/avg60=1.54/avg300=2.53. Recent local pressure is low; older
+averages reflect earlier load. This supersedes prior backup-running statements.
+The earlier whole-Job time estimate was unreliable because per-volume progress
+did not expose the remaining volume set. Successful backup completion and low
+recent PSI do not prove the root cause of previous spikes.
+
+Kuma service recovery and Kubernetes saved-value restoration previously
+completed. The remaining intentionally paused host services are the watchdog
+application/PostgreSQL and standalone Scrutiny on proxmox2-old. Before restoring
+them, verify sustained low pressure on BOTH hosts with the prepared read-only
+watcher on proxmox3:
+
+```bash
+sudo python3 watch-kuma-closeout.py
+```
+
+It checks the exact completed Job UID/status, both-host PSI and active/stable
+k3s identity through existing trusted non-root SSH. It requires three consecutive
+low-pressure samples, spaced 30 seconds, AFTER Job completion before reporting
+success. It does not start services, change schedules or limits, or repair any
+storage. Observations/marker are private under `/var/tmp/kuma-closeout-watch-*`.
+Default observation window is 30 minutes; `--minutes` may limit observation
+without changing pressure thresholds. Actual latest data includes only one
+proxmox3 pressure snapshot; watcher success and fresh peer health are not yet
+reported. If it refuses, inspect the reason; do not treat timeout as success.
+
+After it passes, restore on proxmox2-old:
+
+```bash
+sudo python3 pause-kuma-host-compose.py restore --execute
+```
+
+Saved baseline remains `/var/tmp/kuma-host-compose-20261118T192324749221Z`.
+Starts originally running PostgreSQL first, waits for health, then Scrutiny and
+watchdog and restores saved unless-stopped policies. No Compose volume removal
+or rebuild is implied. Report results and check actual application/host health.
+This command is authorized by the earlier user approval to pause/restore these
+services, but execution is not yet reported. Existing incident-related Fleet
+pauses, old-node maintenance controls and desired replica count 1 remain for
+separate reviewed follow-up. No new transfer cap, data copy or storage mutation
+occurred on this observation; final closeout still awaits these checks/results.
+
+## Newer health observation: Rancher recovered; backup still running
+
+Operator reports all three Rancher pods 1/1 Running on proxmox3, zero restarts;
+rancher-webhook and system-upgrade-controller are also Ready. This supersedes
+the earlier Rancher 1/3 observation. Daily backup Job nas-daily-backup-29917440
+remains Running 0/1 after 8m21s. Exact wall-clock time was not supplied.
+Current proxmox3 PSI some avg10=3.54, full avg10=1.97; full avg60=3.00 and
+avg300=4.23. Pressure has improved but is close to the full=2 threshold and
+has not been demonstrated sustained low. Do not infer that backup completion
+or storage stability has already been achieved. Keep standalone Compose paused;
+let the progressing backup finish and check several current pressure samples
+before adding that load. No storage process, schedule, cap or workload was
+changed by this observation. Traefik replica deficit and final schedule/
+reconciliation/StatefulSet checks remain outstanding.
+
+## Busy PID mapped to Kuma; recurring backup progressing on other volumes
+
+Operator supplied compact saved snapshot at 06:57:20.946903 UTC from
+`/var/tmp/longhorn-io-inspection-20261119T065720946903Z`. PID 1806970 was present,
+startTicks 122672604, inside instance-manager-b10f19f12351bcae88e7b0bc894765c7
+(pod UID 6ea61008-38f8-4325-9782-7f1f9f0dd8ca). Its argv-derived volume ID is
+Kuma `pvc-326def38-faba-49f6-8a78-ebf719227220`; matching replica r-9cdce044 is
+running on proxmox3, volume attached there, engine running with sole RW replica
+and no active/error operation entries in the compact snapshot. Role was not
+recognized by the conservative argv parser; do not invent replica/controller
+role from process name. A busy Kuma-volume process is not proof of rebuild,
+backup, corruption or a particular SQLite operation. Original-volume application
+I/O and snapshot-related work need separate investigation if pressure persists.
+
+Job nas-daily-backup-29917440 was active at this snapshot. Supplied logs show
+sequential successful backups, snapshot/retention cleanup and next-volume starts
+at concurrency=1, executionCount=63, retention=14 and full-backup-interval=7.
+For example pvc-35563078 completed at 06:55:49 UTC, pvc-0562a0af at 06:56:04,
+pvc-6cbf25ee at 06:56:29, Homer RWX at 06:56:40, pvc-3d1d3369 at 06:57:05,
+and pvc-4d1b252e at 06:58:20. Last supplied log shows pvc-6267e84f backup at
+96% at 06:58:36 UTC. Full Job completion has NOT been reported. These logs
+identify actual backup traffic on OTHER volumes, not a backup of Kuma at the
+time of its busy PID observation; temporal overlap alone does not prove cause.
+Concurrency 1 is not a confirmed bytes/s cap. No backup bandwidth/cap setting
+was changed, and completed recovery-transfer workers remain idle.
+
+Next read current Job status, current PSI and Rancher pods. Do not cancel a
+progressing backup or kill storage processes merely from overlap; if pressure
+continues, inspect recent Kuma logs/current process/volume evidence for its
+separate I/O. Keep standalone Docker paused until load settles and readiness
+is assessed. Rancher 1/3 and Traefik 1/2 from the last health listing remain
+unresolved until newer evidence supersedes them. No new storage mutation or
+source repair is proposed by these observations.
+
+## Active Longhorn backup Job found in supplied inspection
+
+The operator's pasted inspector tail shows active Job
+`longhorn-system/nas-daily-backup-29917440` (active=1). The pasted engine subset
+has empty rebuild/backup lists and idle/completed restore/purge entries; this
+is not evidence of ongoing rebuilds or purges, nor proof that no backup exists
+on an omitted engine. The PID-mapping header and earlier engine entries were
+not supplied. Normal engine/replica RW activity alone does not identify cause.
+The backup Job is a plausible contributor after schedules were restored, but
+its actual operation/progress and relation to PID 1806970 require logs/current
+evidence. Do not stop an instance manager or kill the Longhorn process blindly.
+
+The inspector formerly printed every engine because idle restore/purge entries
+made their lists nonempty. Corrected compact output to retain only PID-matched
+volumes, active operations or errors, with completed/idle entries omitted.
+`sudo python3 inspect-longhorn-io.py --saved-summary` reads the latest saved
+snapshot without API calls, recovering the omitted mapping header and active
+Job list. Tests covered active/error retention and completed/idle filtering.
+Next inspect that compact summary and the active Job's bounded logs. Docker
+remains paused pending pressure assessment; no data copy, storage mutation,
+backup cancellation, transfer-cap change or new shutdown has been performed.
+
+## Storage activity inspection pending — 19 November, 06:54–06:55 UTC
+
+Latest operator diagnostics:
+proxmox3 `/var/tmp/kuma-io-diagnostic-proxmox3-20261119T065424819414Z`;
+proxmox2-old `/var/tmp/kuma-io-diagnostic-proxmox2-old-20261119T065501732706Z`.
+Both APIs passed readiness and k3s counters remained 139/114 respectively,
+with original start identities unchanged. Peer PSI some/full avg10 was zero.
+Proxmox3 pressure declined from the earlier peak but rose again during this
+sample: full avg10 1.71 -> 1.40 -> 1.51 -> 2.14 -> 2.66 -> 3.26;
+some avg10 ended at 3.92. This still exceeds the full=2 maintenance threshold;
+do not resume Docker/other new work solely because readyz passes.
+
+Largest sampled proxmox3 process was Longhorn PID 1806970, reading 100818944
+and writing 26288128 bytes over roughly ten seconds, pod cgroup UID
+`6ea61008-38f8-4325-9782-7f1f9f0dd8ca` (container prefix 0c575eb7218b).
+ZFS kernel threads also performed I/O; counters can overlap across storage
+layers and must not be added as independent physical bandwidth. The sample
+shows a busy storage process, not proof of rebuild, backup, hardware failure
+or the workload that caused it. Later pool iostat intervals sampled lower
+traffic and are not concurrent proof that the earlier pressure disappeared.
+
+Prepared read-only PID/volume/operation mapper, on proxmox3:
+
+```bash
+sudo python3 inspect-longhorn-io.py 1806970
+```
+
+It reads current PID identity/cgroup and extracts only volume IDs and known
+role names, never full argv/environment; maps the pod UID; collects current
+Longhorn engine operation status and matching volume/replica state plus active
+Jobs. Saves private details under `/var/tmp/longhorn-io-inspection-*` and prints
+a limited summary. If the PID exited it reports that limitation rather than
+attributing current operations to an absent task. Historical completed engine
+operation entries may still appear; inspect their state/progress before calling
+them active. Syntax/help checked; live inspection pending. Do not kill a storage
+process or change global replica/backup settings without identifying the
+operation. No data copy/cap change/replica mutation/restart occurs in this check.
+Standalone Docker remains paused pending pressure resolution.
+
+## Post-restore health check — high I/O pressure, closeout blocked
+
+Operator supplied deployment/API/PSI output after the 06:52:04 UTC restore
+completion (exact observation time was not supplied). All listed application
+Deployments are Ready at intended live counts, including Kuma 1/1, Homer Test
+2/2 and Filebot 0/0. The StatefulSet PostgreSQL is not covered by this deployment
+listing and requires its own final check. Fleet/CAPI/Turtles/CloudCasa and other
+listed controllers were Ready except Rancher 1/3 (3 up-to-date, 1 available).
+Traefik remained 1/2 (1 up-to-date, 1 available), matching the earlier unresolved
+replica issue; the current reason still requires fresh pod/events assessment.
+Longhorn listed deployments were Ready; this does not prove volume redundancy
+or absence of replica rebuild/backup activity.
+
+API readyz passed, including etcd. However proxmox3 I/O PSI was HIGH:
+some avg10=55.53/avg60=41.49/avg300=14.27;
+full avg10=18.67/avg60=23.26/avg300=8.61. API readiness and ready application
+pods do not waive this pressure condition or establish stable storage health.
+The restore script completed earlier; no bulk copy worker/cap is active.
+
+Do NOT restore standalone Docker yet, uncordon proxmox2-old, raise replica
+counts, restart storage/control-plane daemons, or repeat shutdown/restore
+blindly. Keep current services/ownership stable while collecting read-only
+host/process/pool/kernel/Longhorn evidence on both storage hosts:
+
+```bash
+sudo python3 diagnose-kuma-io-pressure.py --restoring
+```
+
+Inspect the resulting evidence for current I/O processes, recent errors,
+Longhorn rebuild/backup activity and readiness changes. Post-start application
+work or resumed schedules may contribute, but no cause has been established.
+Identify the actor before choosing a targeted, saved-state mitigation.
+Kubernetes saved-value restoration is complete; incident recovery/health and
+standalone Compose restoration remain incomplete.
+
+> **Current handoff:** [19 November quick handoff](kuma-recovery-handoff-2026-11-19.md).
+> Kubernetes restore completed at 06:52:04 UTC on 19 November. Controller
+> readiness, final health and standalone Docker restoration remain unverified.
+> Do not rerun the completed restore for health checks. Sections below retain
+> historical states; use the quick handoff for current status and evidence paths.
+
+## Latest supplied state — 19 November: YouTubeDL Ready after restoration timeout
+
+The operator resumed Kubernetes restoration at 01:07:29 UTC after both-host
+pressure settled and API readiness/restart counts remained stable. Ready events
+were supplied through Radarr, Scrutiny, Smokeping, Sonarr, Ubooquity and Whisparr;
+Kuma's deliberate recovered one-replica state was preserved. YouTubeDL Material
+replicas 0 -> 1 was confirmed at 01:17:04.145965 UTC, but its rollout exceeded
+the executor's 120-second wait and stopped the restore process.
+
+Subsequent operator diagnostics show BOTH YouTubeDL Material and MongoDB 1/1
+Running on proxmox3, zero restarts, deployment desired/updated/available all 1,
+Progressing/Available True, and no current deployment events. Logs show MongoDB
+ping ok, verified Python 3.12.16 installation, startup permission handling,
+PM2 online and the app serving on 10253 at 01:23:13 UTC. Those initialization
+steps apparently exceeded the earlier wait; the exact duration of each step
+was not measured. No persistent rollout/storage/database failure is established
+by this supplied evidence. Mongosh history-directory warnings did not prevent
+a successful ping/startup. Do not restart or change this now-ready workload.
+
+The restoration process has exited and must be resumed, not run concurrently:
+
+```bash
+sudo python3 kuma-recovery-maintenance.py restore --keep-recovered-kuma --keep-longhorn-paused --execute
+```
+
+It rechecks already-restored readiness/counts, retains the pressure guard, and
+continues remaining workloads/schedules/controllers. No full restoration-
+completion event has been reported. Standalone Compose restoration, final
+cluster health, UI confirmation and incident reconciliation/storage review
+remain outstanding. Older checkpoints below are historical and superseded by
+this report. The original maintenance baseline must not be replaced; no copy
+or transfer-cap change occurs during restoration.
+
 ## Latest reported checkpoint — restoration stopped after 20:08:16 UTC, 18 November
 
 The later operator report supersedes the in-progress checkpoint below.
@@ -1473,3 +1911,70 @@ Longhorn pause, and restored other saved replicas. Live Kubernetes restoration
 not yet reported. Standalone Docker remains stopped/restart-disabled until
 separate restoration. Placement persistence in Git, deliberate reconciliation,
 Longhorn redundancy and underlying incident diagnosis remain follow-up work.
+
+
+## Kubernetes restore completion — 19 November, 06:52:04 UTC
+
+Operator final event at 06:52:04.382382 UTC:
+`saved_values_restored_reconciliation_and_final_health_require_verification`.
+The executor finished saved-value restoration, preserving recovered Kuma,
+original Filebot zero and deliberate Kuma/Longhorn pauses. Last mutations
+confirmed CAPI/Fleet/gitjob/helmops/system-upgrade/Turtles/agent desired replicas
+1 and Rancher 3. These controller mutations did not include readiness waits;
+check current deployments, API readiness and pressure before proceeding.
+Standalone Compose remains stopped as last observed and still needs separate
+restoration. Do not describe the full incident as resolved: redundancy,
+underlying cause, placement persistence and deliberate reconciliation remain
+open. No copying or transfer-cap change occurred during this completion.
+The linked quick handoff is updated; older running/paused restoration statements
+are historical snapshots, superseded by this completion event.
+
+### Kuma Fleet dry-run JSON conversion fix — 19 November, 14:17 UTC
+
+Operator dry run created evidence directory
+`/var/tmp/kuma-fleet-placement-20261119T141729437081Z` then failed with
+`Extra data: line 37 column 1 (char 1046)`. The preview converter incorrectly
+assumed kubectl multi-document `create --dry-run=client -o json` emits a single
+JSON document. It can emit consecutive resource objects. Updated both chart-
+render and Fleet-preview conversions with strict streaming JSON decoding and
+Kubernetes List flattening. Single objects/Lists remain supported; malformed,
+empty or trailing non-JSON output still fails. No schema validation was disabled.
+No cluster mutation occurs in this dry-run path; native apply remains pending.
+Tests covered concatenated resource objects, Lists, single objects and malformed
+input plus the existing mocked Fleet workflow. Re-run the same dry run before
+execution; Fleet values remain not yet eligible for commit/push.
+
+### Post-Kuma storage assessment — operator node/volume/Fleet snapshot
+
+New operator output confirms Kuma Bundle 1/1 Ready. Longhorn Bundle is 0/1
+NotReady, reporting manager DaemonSet progressing Updated 1/2 and updateStrategy
+modification involving rollingUpdate.maxUnavailable=100%. Do not apply that
+reported strategy or restart/delete managers blindly; temporary OnDelete/
+maintenance toleration changes need comparison with live strategy/pod revisions.
+A Fleet strategy/rollout warning alone does not establish volume failure.
+
+Kubernetes lists only proxmox2-old (Ready,SchedulingDisabled, v1.36.4+k3s1) and
+proxmox3 (Ready, v1.36.6+k3s1). Proxmox5 is absent as a Kubernetes Node; this
+neither disproves its earlier etcd-voter membership nor proves current three-
+voter health. Fresh etcd membership/endpoint health is required before any old-
+node shutdown/removal; no shutdown is authorized by the Node list.
+
+Both Longhorn nodes report Ready, but only proxmox3 allows/is eligible for new
+replica scheduling. Many attached volumes remain degraded; some are healthy.
+Kuma is attached/healthy on proxmox3, but desired replicas remain 1 as last
+explicitly set; healthy relative to that count is not redundancy. Other healthy
+volumes may still have existing replicas on the old node: scheduling disabled
+does not remove or invalidate those existing replicas. Detached/unknown entries
+are not evidence of loss without examining desired state/consumers/replicas.
+No replica deletion/count increase/scheduling change or PVC migration occurred.
+
+Prepared read-only `assess-longhorn-redundancy.py` on proxmox3. It saves full
+node/volume/replica/engine/manager/pod/Bundle evidence privately and prints compact
+per-PVC desired/running/RW counts and nodes, live manager strategy/revisions,
+node controls and actual Bundle pause state. Running/RW records do not prove
+filesystem health. Test covered explicit distinction between desired-one healthy
+and replicated data. Live execution pending. Root asked whether the next plan
+should retire proxmox2-old, return it after investigation, or assess first;
+answer remains pending. Proxmox5 remains planned control-plane only, not an
+assumed storage target. Any future migration follows fresh cluster-wide shutdown
+and cap-record requirements; the current assessment performs reads only.
