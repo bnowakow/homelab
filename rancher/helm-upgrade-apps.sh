@@ -1403,6 +1403,14 @@ apply_fleet_bundle() {
           [[ "$helm_failure_message" == *'conflict with "cloudcasa-kubeagent-manager"'* ||
              "$helm_failure_message" == *'conflicts with "cloudcasa-kubeagent-manager"'* ]]; then
           repair_cloudcasa_field_ownership && repair_approved=1
+        elif [[ "$helm_failure_message" == *'kubectl-patch'* &&
+                "$helm_failure_message" == *'.spec.template.spec.nodeSelector'* ]]; then
+          if repair_calibre_placement_conflict "$app" "$namespace" &&
+            apply_fleet_bundle_with_repair "$app" --kubeconfig "$kubeconfig_path" \
+              --namespace fleet-local "${native_apply_labels[@]}" \
+              "$bundle_name" "$relative_fleet_dir"; then
+            repair_approved=1
+          fi
         elif ask_attempt_fleet_repair "$app" "$namespace"; then
           repair_approved=1
         fi
@@ -1428,6 +1436,18 @@ apply_fleet_bundle() {
           fi
           log "$app: requested Fleet repair did not start successfully"
         fi
+      fi
+      if [[ "$helm_failure_message" == *'kubectl-patch'* &&
+            "$helm_failure_message" == *'.spec.template.spec.nodeSelector'* ]]; then
+        ask_collect_placement_conflict "$app" "$namespace" "$helm_failure_message"
+        exit_status=1
+        failure_events_count=$((failure_events_count + 1))
+        if [ "$current_app_failed" -eq 0 ]; then
+          current_app_failed=1
+          failed_apps_count=$((failed_apps_count + 1))
+        fi
+        cleanup
+        exit 1
       fi
       record_failure_and_maybe_abort "Helm upgrade failed ($app)" \
         "Helm release $namespace/$app is failed while Fleet still reports the previous deployment as applied.\n\nHelm reason: $helm_failure_message"
@@ -1828,6 +1848,100 @@ show_postcheck_log_review_modal() {
     --no-label "Does not" \
     --defaultno \
     --yesno "Namespace: $namespace\n${summary_title}:\n$summary_body\n\nDo these logs look good after the upgrade?" 24 120
+}
+
+# This repair is deliberately limited to the incident placement verified for
+# Calibre. Never clear all kubectl-patch ownership (it also owns replicas).
+repair_calibre_placement_conflict() {
+  local app="$1" namespace="$2" object patch evidence_dir values_file
+  [ "$app" = calibre ] && [ "$namespace" = apps-calibre ] || return 1
+  command -v dialog >/dev/null 2>&1 && [ -t 0 ] && [ -t 1 ] || return 1
+  values_file="$script_dir/fleet/apps/calibre/values.yaml"
+  object="$(timeout 25s kubectl --request-timeout=20s --kubeconfig "$kubeconfig_path" \
+    --namespace "$namespace" get deployment "$app" --show-managed-fields -o json \
+    2>>"$log_file")" || return 1
+  # Refuse any unexpected selector, manager operation, or ownership shape.
+  patch="$(printf '%s' "$object" | jq -ce '
+    (.metadata.managedFields // []) as $fields |
+    select(.spec.template.spec.nodeSelector == {"kubernetes.io/hostname":"proxmox3"}) |
+    select(any($fields[]; .manager == "kubectl-patch" and .operation == "Update" and
+      .fieldsV1["f:spec"]["f:template"]["f:spec"]["f:nodeSelector"] == {})) |
+    [{op:"test",path:"/metadata/resourceVersion",value:.metadata.resourceVersion},
+     {op:"test",path:"/spec/template/spec/nodeSelector",value:.spec.template.spec.nodeSelector},
+     {op:"test",path:"/metadata/managedFields",value:$fields},
+     {op:"replace",path:"/metadata/managedFields",value:[$fields[] |
+       if .manager == "kubectl-patch" and .operation == "Update" then
+         del(.fieldsV1["f:spec"]["f:template"]["f:spec"]["f:nodeSelector"])
+       else . end]}]')" || return 1
+  evidence_dir="$(mktemp -d "$log_dir/calibre-placement-repair-XXXXXX")" || return 1
+  chmod 700 "$evidence_dir"
+  printf '%s\n' "$object" >"$evidence_dir/deployment-before.json"
+  printf '%s\n' "$patch" >"$evidence_dir/ownership-patch.json"
+  cp "$values_file" "$evidence_dir/values-before.yaml" || return 1
+  # Exact context avoids changing another workload or parsing YAML with regexes.
+  python3 - "$evidence_dir" <<'PYCODE'
+import sys
+from pathlib import Path
+p=Path(sys.argv[1]); text=(p/'values-before.yaml').read_text()
+old='workload:\n  main:\n    replicas: 1\n    strategy: Recreate\n    podSpec:\n      nodeSelector:\n        kubernetes.io/hostname: proxmox2-old'
+if text.count(old) != 1:
+    raise SystemExit('Unexpected Calibre values; refusing placement repair')
+(p/'values-proposed.yaml').write_text(text.replace(old,old.replace('proxmox2-old','proxmox3'),1))
+PYCODE
+  [ "$?" -eq 0 ] || return 1
+  if ! dialog --clear --begin 2 10 --defaultno \
+    --title "Repair Calibre placement ownership?" \
+    --yesno "Calibre is running on proxmox3, but local Fleet values still select proxmox2-old.\n\nUpdate only Calibre's local node selector to proxmox3, release only kubectl-patch ownership of its Deployment nodeSelector, then reapply this app through native Fleet and retry once? Replica ownership and live placement are preserved during the ownership patch. The chart upgrade may recreate Calibre. No PVC migration or old-node scheduling change is performed.\n\nBackup and proposed values: $evidence_dir\n\nApprove this repair? (--yes does not approve it automatically.)" 24 115; then
+    log "calibre: placement repair declined; plan retained at $evidence_dir"
+    return 1
+  fi
+  cmp -s "$values_file" "$evidence_dir/values-before.yaml" || return 1
+  cp "$evidence_dir/values-proposed.yaml" "$values_file" || return 1
+  log "calibre: user approved placement repair; local values updated; evidence=$evidence_dir"
+  if ! timeout 25s kubectl --request-timeout=20s --kubeconfig "$kubeconfig_path" \
+    --namespace "$namespace" patch deployment "$app" --type=json --patch "$patch" \
+    >>"$log_file" 2>&1; then
+    log "calibre: ownership patch failed; local values remain edited; inspect $evidence_dir before retry"
+    return 1
+  fi
+  log "calibre: scoped nodeSelector ownership released; requesting native Fleet apply"
+}
+
+ask_collect_placement_conflict() {
+  local app="$1" namespace="$2" reason="$3"
+  local evidence_dir command_status
+  log "$app: nodeSelector ownership conflict; stopping upgrades for review: $reason"
+  if ! command -v dialog >/dev/null 2>&1 || [ ! -t 0 ] || [ ! -t 1 ]; then
+    log "$app: no interactive dialog available; no diagnostics collected. Run stops for review."
+    return 0
+  fi
+  if ! dialog --clear --begin 2 10 --defaultno \
+    --title "Collect placement conflict evidence ($app)?" \
+    --yesno "Helm reported a nodeSelector ownership conflict with kubectl-patch.\n\nCollect the live Deployment (including managed fields) and Helm history in a private local directory? Deployment YAML can contain configuration or literal environment values; review it before sharing.\n\nThis only reads cluster state. No field ownership changes, rollback or upgrade retry will run. The upgrade run will stop afterward whether you accept or decline.\n\nCollect diagnostics?" 22 115; then
+    log "$app: diagnostic collection declined; stopping for review"
+    return 0
+  fi
+  evidence_dir="$(mktemp -d "$log_dir/placement-conflict-XXXXXX")" || return 1
+  chmod 700 "$evidence_dir"
+  if timeout 30s kubectl --request-timeout=20s --kubeconfig "$kubeconfig_path" \
+      --namespace "$namespace" get deployment "$app" -o yaml --show-managed-fields \
+      >"$evidence_dir/deployment.yaml" 2>"$evidence_dir/deployment.stderr"; then
+    command_status=0
+  else
+    command_status=$?
+  fi
+  printf 'deployment exit status: %s\n' "$command_status" >"$evidence_dir/status.txt"
+  if timeout 30s helm --kubeconfig "$kubeconfig_path" --namespace "$namespace" \
+      history "$app" -o json >"$evidence_dir/helm-history.json" 2>"$evidence_dir/helm-history.stderr"; then
+    command_status=0
+  else
+    command_status=$?
+  fi
+  printf 'helm history exit status: %s\n' "$command_status" >>"$evidence_dir/status.txt"
+  log "$app: placement conflict diagnostics saved to $evidence_dir (check status.txt for collection failures)" \
+    "Placement conflict evidence: $evidence_dir"
+  dialog --clear --title "Placement conflict evidence" \
+    --msgbox "Evidence directory: $evidence_dir\n\nCheck status.txt for collection failures. Review Deployment YAML before sharing. The upgrade run will now stop for investigation." 12 110 || true
 }
 
 ask_on_failure() {
