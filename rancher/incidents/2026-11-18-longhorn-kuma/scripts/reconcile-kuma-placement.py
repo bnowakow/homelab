@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-ROOT=Path(__file__).resolve().parent
+ROOT=Path(__file__).resolve().parents[3]
 NS='apps-uptime-kuma'
 V='pvc-326def38-faba-49f6-8a78-ebf719227220'
 

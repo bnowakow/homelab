@@ -745,7 +745,7 @@ No PVC copy migration or transfer-cap change occurred in this conversation.
 If subsequent work performs a PVC migration, the cluster-wide application
 shutdown, reconciliation controls, saved state, verified stop, transfer-cap
 records and gradual restoration in
-[the required maintenance procedure](../longhorn/README-5-pvc-migration-maintenance.md)
+[the required maintenance procedure](../../../longhorn/README-5-pvc-migration-maintenance.md)
 apply before copying.
 
 ## Control-plane handoff update

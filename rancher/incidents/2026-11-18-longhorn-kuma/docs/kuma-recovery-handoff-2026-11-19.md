@@ -146,7 +146,7 @@ Mailpile plans for a new migration. No commit or push has been performed here.
 Full chronological results, failures, limitations and command plans are in
 [the recovery record](longhorn-shim-recovery-2026-11-18.md) and
 [incident findings](proxmox2-old-recovery-2026-11-18.md). All PVC migration/copy
-work follows [the required maintenance procedure](../longhorn/README-5-pvc-migration-maintenance.md).
+work follows [the required maintenance procedure](../../../longhorn/README-5-pvc-migration-maintenance.md).
 
 Historical preview note: the first host dry run found an already-unpaused
 Bundle; another at 14:17 UTC stopped on multi-document kubectl JSON parsing.
