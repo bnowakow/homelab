@@ -49,4 +49,4 @@ workload:
     strategy: Recreate
     podSpec:
       nodeSelector:
-        kubernetes.io/hostname: proxmox2-old
+        kubernetes.io/hostname: proxmox3

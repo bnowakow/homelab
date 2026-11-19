@@ -1,5 +1,10 @@
 # Kuma recovery: current handoff for 19 November 2026
 
+> Latest post-reboot state: [19 November reboot record](proxmox2-old-reboot-2026-11-19.md).
+> All 48 attached volumes have one running/RW copy on proxmox3; the six
+> earlier dual-node copies have not rejoined. Historical snapshots below remain
+> chronological evidence, not the current redundancy state.
+
 ## Temporary storage decision — 19 November 2026
 
 Operator decision: keep storage on proxmox3 for the time being. Defer rebuilding
@@ -211,3 +216,39 @@ six live volume replicas. Next choose and validate the second storage location;
 retain its cordon and Longhorn scheduling restrictions pending that plan.
 No cluster settings or membership were changed.
 
+
+
+## Proxmox2-old reboot — 19 November 18:42 UTC
+
+Operator rebooted proxmox2-old after fresh 18:35 checks confirmed three healthy
+etcd voters and surviving RW replicas on proxmox3 for the six dual-node volumes.
+No VM/LXC guests were listed; standalone watchdog/PostgreSQL/Scrutiny Docker
+services were running before reboot. No membership change was performed.
+
+The operator-run read-only watcher observed the old endpoint unavailable during
+reboot, then all three etcd endpoints healthy without collector errors at
+18:42:03, 18:42:13 and 18:42:24 UTC. Final evidence:
+`/var/tmp/etcd-membership-assessment-20261119T184223954704Z`.
+Etcd return is confirmed; post-reboot Kubernetes readiness, Longhorn replicas,
+Docker health and I/O pressure remain to be checked. Keep the cordon and
+Longhorn node/disk scheduling restrictions. Reboot is not evidence that the
+underlying storage/I/O cause has been resolved.
+
+
+### Post-reboot checks — 19 November 18:43 UTC
+
+Operator evidence `/var/tmp/longhorn-redundancy-assessment-20261119T184341637917Z`:
+proxmox2-old is Kubernetes Ready,SchedulingDisabled; Longhorn node Ready with
+node/disk scheduling still disabled. Both managers are Ready; OnDelete mixed
+revisions and Fleet NotReady drift remain unchanged. All 48 attached volumes
+now report one running/RW replica on proxmox3: 47 degraded at desired=2, Kuma
+healthy at desired=1. The six formerly dual-node volumes no longer report a
+running old-node replica. Their stopped replica records/cause of non-rejoin
+have not been investigated; this is not evidence of deletion or data loss.
+No scheduling, eviction, replica count or rebuild change was made.
+
+Watchdog app and PostgreSQL returned healthy; standalone Scrutiny is running
+(no Docker health result shown). Old-host I/O PSI avg10 some/full=0.00/0.00;
+avg60 some=0.23/full=0.12 at the supplied sample. These checks confirm return
+of those services, not repair of the underlying incident cause. Keep storage
+on proxmox3 temporarily as requested, with redundancy explicitly deferred.

@@ -14,12 +14,15 @@ Applications and standalone Docker services were restored afterward.
 
 ## Current disposition
 
-Keep proxmox3 as the temporary storage location. Proxmox2-old remains running,
-cordoned, and unavailable for new Longhorn scheduling; six volumes still have
-existing replicas there. Most attached volumes have one running replica on
-proxmox3. Kuma has desired count one. Do not reduce other desired counts to hide
-degraded status. Three etcd voters were healthy at the recorded closeout snapshot.
+Keep proxmox3 as the temporary storage location. After the old-host reboot,
+all 48 attached volumes have one running/RW copy on proxmox3: 47 degraded at
+desired count two, Kuma healthy at desired count one. The six previously running
+old-node copies have not rejoined in the supplied snapshot; do not delete their
+records or lower desired counts. Proxmox2-old is Ready but cordoned, with Longhorn
+node/disk scheduling disabled. Etcd and standalone Docker returned successfully.
 Storage redundancy and the underlying incident cause remain unresolved.
+
+See the [reboot evidence, timeline and checks](docs/proxmox2-old-reboot-2026-11-19.md).
 
 ## Scripts
 
@@ -56,3 +59,11 @@ cap records. Shutdown mitigates observed I/O risk; it is not a proven storage fi
 Private images, databases, credentials and raw evidence remain outside Git under
 `/var/tmp`; documentation records their locations. Keep the preservation image
 unchanged. Fleet configuration remains in `fleet/apps/uptime-kuma/values.yaml`.
+
+## Watching etcd after the old-host reboot
+
+Run `sudo python3 incidents/2026-11-18-longhorn-kuma/scripts/watch-etcd-return.py`
+on proxmox3. This read-only watcher requires three consecutive successful checks
+of the existing three-member cluster, including the old host endpoint, and stops
+after 15 minutes. Each assessment saves private evidence under `/var/tmp`.
+It does not verify Docker, storage or Kubernetes node recovery.

@@ -1,5 +1,10 @@
 # Longhorn stale infrastructure shim recovery — 2026-11-18
 
+> Latest post-reboot state: [19 November reboot record](proxmox2-old-reboot-2026-11-19.md).
+> All 48 attached volumes have one running/RW copy on proxmox3; the six
+> earlier dual-node copies have not rejoined. Historical snapshots below remain
+> chronological evidence, not the current redundancy state.
+
 ## Temporary storage decision — 19 November 2026
 
 Operator decision: keep storage on proxmox3 for the time being. Defer rebuilding
