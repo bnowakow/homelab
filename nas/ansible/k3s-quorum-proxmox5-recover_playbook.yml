@@ -1,0 +1,80 @@
+---
+# Repair the failed 2026-11-18 proxmox5 join caused by the cluster-critical
+# egress-selector-mode mismatch. This does not touch existing k3s servers.
+- name: Recover the partially installed quorum-only K3s server
+  hosts: proxmox5.localdomain.bnowakowski.pl
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Check the installed K3s binary
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: recovery_binary
+
+    - name: Check the existing K3s config
+      ansible.builtin.stat:
+        path: /etc/rancher/k3s/config.yaml
+      register: recovery_config_file
+
+    - name: Require the failed installation to be present
+      ansible.builtin.assert:
+        that:
+          - recovery_binary.stat.exists
+          - recovery_config_file.stat.exists
+        fail_msg: This repair is only for the partially installed proxmox5 server.
+
+    - name: Read the existing K3s config without displaying the token
+      ansible.builtin.slurp:
+        src: /etc/rancher/k3s/config.yaml
+      register: recovery_config
+      no_log: true
+
+    - name: Require the exact previous join configuration
+      ansible.builtin.assert:
+        that:
+          - "'server: https://proxmox3.localdomain.bnowakowski.pl:6443' in (recovery_config.content | b64decode)"
+          - "'token:' in (recovery_config.content | b64decode)"
+          - "'disable-agent: true' in (recovery_config.content | b64decode)"
+          - "'egress-selector-mode: pod' in (recovery_config.content | b64decode)"
+          - "'secrets-encryption: true' in (recovery_config.content | b64decode)"
+          - "'cluster-init:' not in (recovery_config.content | b64decode)"
+        fail_msg: The existing config differs from the failed join; inspect it manually.
+      no_log: true
+
+    - name: Stop the failing K3s restart loop
+      ansible.builtin.systemd:
+        name: k3s
+        state: stopped
+
+    - name: Match the existing servers' egress selector mode
+      ansible.builtin.lineinfile:
+        path: /etc/rancher/k3s/config.yaml
+        regexp: '^egress-selector-mode:'
+        line: 'egress-selector-mode: agent'
+        mode: '0600'
+
+    - name: Disable Kubernetes control-plane components on the etcd-only member
+      ansible.builtin.lineinfile:
+        path: /etc/rancher/k3s/config.yaml
+        regexp: '^{{ item }}:'
+        line: '{{ item }}: true'
+        insertafter: '^disable-agent: true$'
+        mode: '0600'
+      loop:
+        - disable-apiserver
+        - disable-controller-manager
+        - disable-scheduler
+
+    - name: Start the etcd-only K3s server
+      ansible.builtin.systemd:
+        name: k3s
+        state: started
+        enabled: true
+
+    - name: Wait for the K3s service to stay active
+      ansible.builtin.command: systemctl is-active k3s
+      register: recovery_service
+      retries: 24
+      delay: 5
+      until: recovery_service.stdout | trim == 'active'
+      changed_when: false

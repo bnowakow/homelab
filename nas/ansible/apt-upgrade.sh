@@ -76,8 +76,9 @@ for inventory_file in "${inventory_files[@]}"; do
   done <<< "$inventory_hosts_text"
   (( ${#inventory_targets[@]} > 0 )) || continue
   inventory_limit=$(IFS=,; printf '%s' "${inventory_targets[*]}")
-  printf '\nSudo password for hosts in %s%s%s: %s\n' \
-    "$bold_blue" "$inventory_file" "$normal" "$inventory_limit"
+  printf '\nSudo password for hosts in %s%s%s:\n' \
+    "$bold_blue" "$inventory_file" "$normal"
+  printf '\t%s\n' "${inventory_targets[@]}"
   APT_UPGRADE_HOST_COLOR="$bold_blue" APT_UPGRADE_HOST_RESET="$normal" \
     ANSIBLE_FORCE_COLOR="$ansible_force_color" \
     ansible-playbook -i "$inventory_file" apt-upgrade_playbook.yml \

@@ -1,0 +1,158 @@
+---
+# Join proxmox5 as an agentless embedded-etcd server. It does not register a
+# Kubernetes Node, run pods, or become a Longhorn node. Run only after reviewing
+# the live cluster and host checks in k3s-quorum-proxmox5.md.
+- name: Read the existing K3s server configuration
+  hosts: proxmox3.localdomain.bnowakowski.pl
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Require a ready existing API
+      ansible.builtin.command: k3s kubectl get --raw=/readyz
+      register: k3s_ready
+      changed_when: false
+      failed_when: k3s_ready.rc != 0 or k3s_ready.stdout | trim != 'ok'
+
+    - name: Read the installed K3s version
+      ansible.builtin.command: k3s --version
+      register: k3s_version_output
+      changed_when: false
+
+    - name: Extract the installed K3s version
+      ansible.builtin.set_fact:
+        quorum_k3s_version: "{{ k3s_version_output.stdout | regex_search('v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+') }}"
+
+    - name: Require a pinned K3s version
+      ansible.builtin.assert:
+        that: quorum_k3s_version is string and quorum_k3s_version | length > 0
+
+    - name: Require proxmox5 to be absent from Kubernetes Nodes
+      ansible.builtin.command: k3s kubectl get node proxmox5 --ignore-not-found -o name
+      register: existing_quorum_node
+      changed_when: false
+      failed_when: existing_quorum_node.rc != 0 or existing_quorum_node.stdout | trim | length > 0
+
+    - name: Read the cluster join token
+      ansible.builtin.slurp:
+        src: /var/lib/rancher/k3s/server/node-token
+      register: quorum_join_token
+      no_log: true
+
+- name: Join proxmox5 as a quorum-only server
+  hosts: proxmox5.localdomain.bnowakowski.pl
+  become: true
+  gather_facts: false
+  vars:
+    quorum_source: proxmox3.localdomain.bnowakowski.pl
+  tasks:
+    - name: Check the host short name
+      ansible.builtin.command: hostname -s
+      register: quorum_hostname
+      changed_when: false
+
+    - name: Require the intended host
+      ansible.builtin.assert:
+        that: quorum_hostname.stdout | trim == 'proxmox5'
+
+    - name: Check for an existing K3s binary
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: quorum_existing_binary
+
+    - name: Check for existing K3s server data
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server/db
+      register: quorum_existing_db
+
+    - name: Require a fresh K3s installation
+      ansible.builtin.assert:
+        that:
+          - not quorum_existing_binary.stat.exists
+          - not quorum_existing_db.stat.exists
+        fail_msg: Existing K3s installation or server database needs manual review.
+
+    - name: Require a reachable existing server API
+      ansible.builtin.command:
+        argv:
+          - curl
+          - -kfsS
+          - --connect-timeout
+          - '5'
+          - --max-time
+          - '10'
+          - -o
+          - /dev/null
+          - https://proxmox3.localdomain.bnowakowski.pl:6443/cacerts
+      register: quorum_api
+      until: quorum_api.rc == 0
+      retries: 3
+      delay: 3
+      changed_when: false
+
+    - name: Create K3s configuration directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Configure an agentless embedded-etcd server
+      ansible.builtin.copy:
+        dest: /etc/rancher/k3s/config.yaml
+        owner: root
+        group: root
+        mode: '0600'
+        content: |
+          server: https://proxmox3.localdomain.bnowakowski.pl:6443
+          token: "{{ hostvars[quorum_source].quorum_join_token.content | b64decode | trim }}"
+          disable-agent: true
+          disable-apiserver: true
+          disable-controller-manager: true
+          disable-scheduler: true
+          # This cluster uses K3s's default 'agent' mode. Egress selector mode
+          # is cluster critical and must match the existing servers.
+          egress-selector-mode: agent
+          secrets-encryption: true
+      no_log: true
+
+    - name: Download the K3s installer
+      ansible.builtin.command:
+        argv:
+          - curl
+          - -fLsS
+          - --connect-timeout
+          - '10'
+          - --max-time
+          - '120'
+          - -o
+          - /tmp/k3s-install-proxmox5.sh
+          - https://get.k3s.io
+      changed_when: true
+
+    - name: Restrict the installer script to root
+      ansible.builtin.file:
+        path: /tmp/k3s-install-proxmox5.sh
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Install the same K3s version as proxmox3
+      ansible.builtin.command: sh /tmp/k3s-install-proxmox5.sh server
+      environment:
+        INSTALL_K3S_VERSION: "{{ hostvars[quorum_source].quorum_k3s_version }}"
+      register: quorum_install
+      changed_when: true
+
+    - name: Require the K3s service to be active
+      ansible.builtin.command: systemctl is-active k3s
+      register: quorum_service
+      retries: 12
+      delay: 5
+      until: quorum_service.stdout | trim == 'active'
+      changed_when: false
+
+    - name: Remove the installer script
+      ansible.builtin.file:
+        path: /tmp/k3s-install-proxmox5.sh
+        state: absent
