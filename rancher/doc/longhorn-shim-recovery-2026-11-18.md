@@ -1,5 +1,67 @@
 # Longhorn stale infrastructure shim recovery — 2026-11-18
 
+## Latest reported checkpoint — restoration stopped after 20:08:16 UTC, 18 November
+
+The later operator report supersedes the in-progress checkpoint below.
+Restoration did NOT finish: it stopped on local I/O PSI some avg10=8.18,
+full avg10=7.63 (full exceeds the limit of 2). Supplied output confirms Ready
+rollouts for Bazarr, Bindery, Bookstack, Calibre, Calibre-web, Kavita, Cleanuparr,
+DDClient, Docker-mailserver, DuckDNS and Flaresolverr. Last reported ready event
+was Flaresolverr at 20:08:16.720364 UTC. Earlier phases are recorded in the
+private action log; do not infer remaining application/controller/schedule
+restoration from this partial tail.
+
+The restore process exited; previously restored services remain running. Do
+not run shutdown again, bypass the pressure guard or restart all workloads.
+No copy worker or transfer cap was active, so this was a restoration pause,
+not another transfer-cap reduction. Kuma remains deliberately recovered at 1;
+Filebot's original zero, incident pauses and the standalone Compose pause
+remain as last observed. Fresh state is needed because this report was supplied
+on 19 November for an 18 November run.
+
+Run on BOTH storage hosts:
+
+```bash
+sudo python3 diagnose-kuma-io-pressure.py --restoring
+```
+
+This mode collects current host/process/storage/API evidence without treating
+expected running restored applications as a failed all-zero maintenance gate.
+It does not approve restoration/copying or mutate workloads. Review both-host
+pressure and saved kernel/Longhorn evidence before resuming the same restore
+command with both recovery-preservation flags. Resume is designed to retain
+already-restored counts and original zeros; do not replace the baseline.
+Final restoration, Compose restart, UI confirmation and reconciliation/storage
+follow-up remain outstanding. The earlier current-status blocks below are
+historical and superseded by this stop result.
+
+## Latest status — 20:00:34 UTC, restoration in progress
+
+Original Kuma filesystem recovery, working SQLite/WAL integrity validation and
+normal detach/CSI handoff succeeded. Kuma is Ready on proxmox3 at one replica;
+startup logs show database connection and serving, with no supplied DB errors.
+UI/login/monitor-data confirmation is still pending.
+
+The operator started Kubernetes restoration with
+`restore --keep-recovered-kuma --keep-longhorn-paused --execute`:
+`restore_begin` at 20:00:34.835690 UTC; Bookstack MariaDB replicas 0 -> 1
+confirmed at 20:00:34.985976 UTC. Last supplied output was waiting for that
+rollout. No rollout-ready or full restoration-complete result has been supplied.
+Do not start another restore worker while this one may still run. On timeout,
+pressure or drift, inspect the exact error and saved actions before resuming.
+
+Recovery baselines and logs remain private under the paths recorded below.
+Kuma and Longhorn Bundles remain deliberately paused; Filebot remains an
+original zero. Other applications/schedules are not yet confirmed restored.
+Standalone Docker restoration on proxmox2-old, UI confirmation, desired placement
+persistence/reconciliation, old-node assessment and Longhorn redundancy remain
+outstanding. All transfer workers finished/stopped; no bulk copy is active.
+The last confirmed extraction cap was 1 MiB/s -> 0 at 19:49:51 UTC.
+
+The following sections are historical checkpoints and incident-specific command
+plans. Later results supersede earlier pending/stopped/attached statements;
+do not execute old commands without reviewing current state and attempt markers.
+
 All eight application cleanups succeeded at 13:01:23–13:01:59 UTC, zero skipped/failed. Kuma had already been cleaned manually. Old application pods are gone, but volumes remain attached to proxmox2-old and replacement pods await storage.
 
 This incident-specific script allows ONLY these existing pod names and UIDs:

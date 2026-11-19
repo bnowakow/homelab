@@ -1,5 +1,79 @@
 # Proxmox2-old storage/runtime incident — 2026-11-18
 
+## Latest reported checkpoint — restoration stopped after 20:08:16 UTC, 18 November
+
+The later operator report supersedes the in-progress checkpoint below.
+Restoration did NOT finish: it stopped on local I/O PSI some avg10=8.18,
+full avg10=7.63 (full exceeds the limit of 2). Supplied output confirms Ready
+rollouts for Bazarr, Bindery, Bookstack, Calibre, Calibre-web, Kavita, Cleanuparr,
+DDClient, Docker-mailserver, DuckDNS and Flaresolverr. Last reported ready event
+was Flaresolverr at 20:08:16.720364 UTC. Earlier phases are recorded in the
+private action log; do not infer remaining application/controller/schedule
+restoration from this partial tail.
+
+The restore process exited; previously restored services remain running. Do
+not run shutdown again, bypass the pressure guard or restart all workloads.
+No copy worker or transfer cap was active, so this was a restoration pause,
+not another transfer-cap reduction. Kuma remains deliberately recovered at 1;
+Filebot's original zero, incident pauses and the standalone Compose pause
+remain as last observed. Fresh state is needed because this report was supplied
+on 19 November for an 18 November run.
+
+Run on BOTH storage hosts:
+
+```bash
+sudo python3 diagnose-kuma-io-pressure.py --restoring
+```
+
+This mode collects current host/process/storage/API evidence without treating
+expected running restored applications as a failed all-zero maintenance gate.
+It does not approve restoration/copying or mutate workloads. Review both-host
+pressure and saved kernel/Longhorn evidence before resuming the same restore
+command with both recovery-preservation flags. Resume is designed to retain
+already-restored counts and original zeros; do not replace the baseline.
+Final restoration, Compose restart, UI confirmation and reconciliation/storage
+follow-up remain outstanding. The earlier current-status blocks below are
+historical and superseded by this stop result.
+
+## Current checkpoint — restoration started at 20:00:34 UTC
+
+This summary supersedes older status snapshots below. Times in this checkpoint
+are UTC; some earlier handoffs explicitly use CET. State is based on operator-
+provided output, not independent live monitoring from the preparation sandbox.
+
+- Kuma's original filesystem was repaired and passed a full no-write check.
+  A preserved raw image and verified working/extracted recovery data are retained.
+- Recovered working SQLite passed integrity_check with WAL included: 9 monitors,
+  1 user, 382374 heartbeats, 1 notification. Actual UI/login confirmation is pending.
+- Kuma is running at one Ready replica on proxmox3, pod
+  `uptime-kuma-77dc9cb569-ns26c`; startup logs show successful DB connection
+  and HTTP serving. Manual validation attachment was removed with normal detach
+  before CSI handoff. No DB/filesystem errors appeared in supplied startup logs.
+- Kubernetes restoration STARTED at 20:00:34.835690 UTC with
+  `restore --keep-recovered-kuma --keep-longhorn-paused --execute`.
+  Bookstack MariaDB scale 0 -> 1 was confirmed at 20:00:34.985976 UTC;
+  last supplied output was waiting for that rollout. Its readiness and final
+  restoration completion have NOT been reported. Do not launch a second restore
+  instance while the first may still be running.
+- Keep recovered Kuma at 1, original Filebot at 0, and Kuma/Longhorn Bundles paused.
+  Other saved replicas/schedules are being restored gradually, not yet confirmed
+  restored. The original backup schedule is still subject to that restoration.
+- Three approved standalone Docker containers on proxmox2-old remain stopped
+  with restart disabled, unless a later verified action supersedes this checkpoint.
+  Their separate restoration is outstanding.
+- Kuma's desired Longhorn replica count is still 1. The old node remains
+  cordoned/tainted with Longhorn node/disk scheduling disabled. Underlying cause,
+  full storage redundancy, placement persistence and reconciliation review remain
+  unresolved. Kuma service recovery is not whole-cluster incident resolution.
+
+Restoration state/action log:
+`/var/tmp/kuma-recovery-maintenance-20261118T180953924876Z/maintenance-actions.jsonl`.
+Compose baseline: `/var/tmp/kuma-host-compose-20261118T192324749221Z`.
+Preservation: `/var/tmp/kuma-preservation-20261118T184540364827Z`.
+The detailed [recovery record](longhorn-shim-recovery-2026-11-18.md) records
+filesystem/database evidence, copy-cap request/confirmation/abort history,
+exceptions and guarded scripts. Do not blindly rerun historical commands below.
+
 ## Findings
 - Two k3s control-plane/etcd nodes: proxmox3 and proxmox2-old. Both report Ready; Longhorn on proxmox2-old does not. Node Ready is insufficient to establish storage health.
 - Longhorn manager failed, later stuck Terminating. Instance manager ContainerStatusUnknown; eviction blocked by PDB. Drain policy block-if-contains-last-replica was retained.
@@ -39,8 +113,8 @@ kubectl get pods -n kube-system -o wide
 kubectl get --raw='/readyz?verbose'
 ```
 
-The third node provides quorum protection; it does not repair the failed
-NVMe, `emergency_ro` filesystems, stale container tasks, or degraded Longhorn
+The third node provides quorum protection; it does not resolve the storage/
+runtime incident, `emergency_ro` filesystems, stale container tasks, or degraded Longhorn
 volumes on `proxmox2-old`. Do not uncordon or power down `proxmox2-old` merely
 because `proxmox5` joined. First recover/validate Longhorn attachments and
 replicas, then remove the old etcd member only as a separate planned step.

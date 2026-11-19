@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read-only short I/O-pressure/process/storage diagnostic. Never retries a transfer."""
+import argparse
 import datetime
 import json
 import os
@@ -25,6 +26,9 @@ def processes():
 
 
 def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--restoring',action='store_true',help='Partial-restoration diagnostic; do not require all applications stopped')
+    args=parser.parse_args()
     host=socket.gethostname().split('.')[0]
     if os.geteuid()!=0 or host not in ('proxmox3','proxmox2-old'):
         raise RuntimeError('Run with sudo on each storage host')
@@ -56,7 +60,7 @@ def main():
     commands['longhorn']=kube+['get','engines.longhorn.io,replicas.longhorn.io,volumes.longhorn.io,instancemanagers.longhorn.io','-n','longhorn-system','-o','json']
     commands['pods']=kube+['get','pods','-A','-o','wide']
     commands['readyz']=kube+['get','--raw=/readyz?verbose']
-    if host=='proxmox3':commands['maintenance']=[sys.executable,str(Path(__file__).with_name('kuma-recovery-maintenance.py')),'verify']
+    if host=='proxmox3' and not args.restoring:commands['maintenance']=[sys.executable,str(Path(__file__).with_name('kuma-recovery-maintenance.py')),'verify']
     reports={}
     for name,command in commands.items():
         try:
@@ -68,7 +72,10 @@ def main():
         (folder/(name+'.json')).write_text(json.dumps(report,indent=2)+'\n')
     summary={'host':host,'directory':str(folder),'samples':samples,'topIOProcesses':busy[:15],
              'k3s':reports['k3s'],'readyz':reports['readyz'],
-             'maintenance':reports.get('maintenance'),'poolIO':reports.get('pool-io'),
+             'maintenance':reports.get('maintenance'),
+             'phase':'partial restoration' if args.restoring else 'shutdown/copy assessment',
+             'maintenanceVerificationSkipped':args.restoring,
+             'poolIO':reports.get('pool-io'),
              'limitations':'Process counters are best-effort over 10 seconds; exited/new tasks and kernel/ZFS attribution may be incomplete. No causal diagnosis or restart/copy approval.'}
     (folder/'summary.json').write_text(json.dumps(summary,indent=2)+'\n')
     print(json.dumps(summary,indent=2))
