@@ -6,6 +6,8 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/youtubedl-material
+  # Recovery: chart 18 ignores mongodb.persistence and creates an empty DB PVC.
+  # Keep the compatible backend until a validated database upgrade is prepared.
   version: 17.2.4
   releaseName: youtubedl-material
   waitForJobs: true
