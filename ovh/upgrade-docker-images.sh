@@ -48,10 +48,10 @@ confirm() {
 }
 
 latest_tag() {
-  local image=$1 result newest checker_status response_file next_url page tag_count candidate
+  local image=$1 container=$2 result newest checker_status response_file next_url page tag_count candidate
 
   log "checking image=$image with checker=$IMAGE_CHECKER"
-  result=$($IMAGE_CHECKER "$image" 2>>"$LOG_FILE") || {
+  result=$("$IMAGE_CHECKER" "$image" "$container" 2>>"$LOG_FILE") || {
     checker_status=$?
     log "checker failed image=$image status=$checker_status"
     return 1
@@ -165,7 +165,7 @@ for deployment in "${DEPLOYMENTS[@]}"; do
       newest_tag=$cached_tag
       log "using persistent cached newest tag image=$image tag=$newest_tag"
     else
-      newest_tag=$(latest_tag "$image") || check_status=$?
+      newest_tag=$(latest_tag "$image" "$container") || check_status=$?
     fi
     if [[ $check_status -eq 0 ]]; then
       newest_tag_cache[$image]=$newest_tag
