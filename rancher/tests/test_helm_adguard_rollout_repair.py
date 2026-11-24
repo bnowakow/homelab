@@ -18,6 +18,7 @@ class AdguardRecovery(unittest.TestCase):
             harness = '''
 script_dir="$TEST_DIR"; log_dir="$TEST_DIR"; log_file="$TEST_DIR/log"
 kubeconfig_path=unused; dry_run="$DRY"; yes_mode=1
+declare -A precheck_repaired_versions=()
 log() { echo "$*" >> "$log_file"; }
 timeout() { shift; "$@"; }
 dialog() { echo "dialog $*" >> "$TEST_DIR/calls"; return "$APPROVE"; }
@@ -70,6 +71,20 @@ kubectl() {
                     result = subprocess.run(['bash', '-c', VERSION_FUNCTION + '\nfleet_version_from_file "$1"', 'test', str(path)], capture_output=True, text=True)
                     self.assertEqual(result.stdout.strip(), expected)
                     self.assertEqual(result.returncode, 0 if expected else 1)
+
+    def test_completed_precheck_repair_skips_duplicate_apply(self):
+        start = SCRIPT.index('  if [ "${precheck_repaired_versions[$app]:-}" = "$target_version" ]')
+        end = SCRIPT.index('\n  if [ "$dry_run" -eq 1 ]; then', start)
+        branch = SCRIPT[start:end]
+        for repaired, expected_apply in [('16.0.0', False), ('15.0.0', True), ('', True)]:
+            with self.subTest(repaired=repaired):
+                harness = 'declare -A precheck_repaired_versions=(); app=adguard-home; namespace=apps-adguard-home; target_version=16.0.0; fleet_file=unused; dry_run=0\n'
+                harness += 'precheck_repaired_versions[$app]="$1"\nlog() { :; }; perform_upgrade() { echo APPLY; }\n'
+                harness += 'for iteration in 1; do\n' + branch + '\necho VERIFY_AND_POSTCHECK\ndone'
+                result = subprocess.run(['bash', '-c', harness, 'test', repaired], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual('APPLY' in result.stdout, expected_apply)
+                self.assertIn('VERIFY_AND_POSTCHECK', result.stdout)
 
     def test_schema_mismatch_uses_fleet_instead_of_restart(self):
         rc, calls, err = self.run_repair(schema=True)

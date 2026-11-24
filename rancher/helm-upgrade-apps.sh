@@ -44,6 +44,7 @@ failure_events_count=0
 version_check_error_apps=()
 current_app=""
 declare -A schema_repaired_values=()
+declare -A precheck_repaired_versions=()
 current_app_failed=0
 insecure_hosts=""
 check_summary_title=""
@@ -2803,6 +2804,7 @@ maybe_repair_adguard_rollout() {
       return 2
     fi
     log "$app: Fleet schema repair rollout ready; proceeding to ingress precheck"
+    precheck_repaired_versions[$app]="$repair_version"
     return 0
   fi
   if ! timeout 25s kubectl "${kc[@]}" -n "$namespace" rollout restart "deployment/$app" \
@@ -3193,7 +3195,9 @@ for app in $apps; do
     continue
   fi
 
-  if ! perform_upgrade "$app" "$namespace" "$target_version" "$fleet_file"; then
+  if [ "${precheck_repaired_versions[$app]:-}" = "$target_version" ] && [ "$dry_run" -eq 0 ]; then
+    log "$app: target chart $target_version already applied by approved precheck repair; proceeding to version verification and postchecks"
+  elif ! perform_upgrade "$app" "$namespace" "$target_version" "$fleet_file"; then
     current_app=""
     continue
   fi
