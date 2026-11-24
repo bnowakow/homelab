@@ -8,11 +8,20 @@ version_helper="$script_dir/zabbix/lib/helm-current-version-of-chart.sh"
 if [ ! -x "$version_helper" ]; then
     version_helper="/etc/zabbix/zabbix_agent2.d/homelab/rancher/zabbix/lib/helm-current-version-of-chart.sh"
 fi
-version_current="$($version_helper "$name" "$2")"
+if ! version_current="$("$version_helper" "$name" "${2:-}")"; then
+    printf '%s: could not determine the available chart version.\n' "$name" >&2
+    echo "false,error"
+    exit 3
+fi
 # Release names can differ from chart names (for example homer-without-auth).
 # Select the release exactly and read its installed chart from structured output.
-installed_chart=$(helm ls --all-namespaces --kubeconfig /etc/rancher/k3s/k3s.yaml -o json |
-    jq -r --arg name "$name" '[.[] | select(.name == $name)][0].chart // empty')
+if ! installed_chart=$(set -o pipefail
+    timeout 5s helm ls --all-namespaces --kubeconfig /etc/rancher/k3s/k3s.yaml -o json |
+    jq -r --arg name "$name" '[.[] | select(.name == $name)][0].chart // empty'); then
+    printf '%s: could not read installed Helm releases.\n' "$name" >&2
+    echo "false,error"
+    exit 3
+fi
 version_local="${installed_chart##*-}"
 
 version_is_numeric() {
@@ -29,6 +38,8 @@ version_is_numeric() {
 
 if [ -z "$version_current" ] || ! version_is_numeric "$version_current" || \
    { [ -n "$version_local" ] && ! version_is_numeric "$version_local"; }; then
+    printf '%s: invalid chart version (available=%q, installed=%q).\n' \
+        "$name" "$version_current" "$version_local" >&2
     echo "false,error"
     exit 3
 fi

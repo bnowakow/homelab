@@ -4,7 +4,7 @@ defaultNamespace: apps-docker-mailserver
 helm:
   chart: docker-mailserver
   repo: https://docker-mailserver.github.io/docker-mailserver-helm/
-  version: 7.0.0
+  version: 7.1.0
   releaseName: docker-mailserver
   waitForJobs: true
   valuesFiles:

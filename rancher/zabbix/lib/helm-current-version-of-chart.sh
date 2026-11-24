@@ -54,11 +54,30 @@ if [ -f "$repositories_file" ]; then
 
     chart_ref="$(helm_chart_ref_for_app "$name" 2>/dev/null || true)"
     if [ -n "$chart_ref" ]; then
-        chart_metadata="$(helm show chart "$chart_ref" 2>/dev/null)"
-        helm_status=$?
-        if [ "$helm_status" -ne 0 ] || [ -z "$chart_metadata" ]; then
-            exit 1
+        # Registry tags contain chart versions. Avoid downloading the chart
+        # archive on each Zabbix poll (the agent has a 30-second timeout).
+        if [ -f "$script_dir/zabbix/lib/oci-chart-version.py" ] && command -v python3 >/dev/null 2>&1; then
+            timeout 20s python3 "$script_dir/zabbix/lib/oci-chart-version.py" "$chart_ref"
+            exit $?
         fi
+        metadata_error="$(mktemp)" || exit 1
+        for attempt in 1 2 3; do
+            chart_metadata="$(timeout 30s helm show chart "$chart_ref" 2>"$metadata_error")"
+            helm_status=$?
+            if [ "$helm_status" -eq 0 ] && [ -n "$chart_metadata" ]; then
+                break
+            fi
+            printf '%s: chart metadata lookup failed (attempt %s/3, status %s):\n' \
+                "$name" "$attempt" "$helm_status" >&2
+            cat "$metadata_error" >&2
+            if [ "$attempt" -eq 3 ] || { [ "$helm_status" -ne 124 ] &&
+                ! grep -Eqi 'timeout|timed out|connection refused|connection reset|temporary failure|no such host|unexpected EOF|429|500|502|503|504' "$metadata_error"; }; then
+                rm -f "$metadata_error"
+                exit 1
+            fi
+            sleep "$attempt"
+        done
+        rm -f "$metadata_error"
         printf '%s\n' "$chart_metadata" |
             awk -F': *' '$1 == "version" { print $2; exit }'
         exit 0

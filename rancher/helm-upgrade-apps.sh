@@ -331,6 +331,7 @@ helper_status_label() {
     0) printf 'up_to_date' ;;
     1) printf 'update_available' ;;
     2) printf 'local_newer_than_repo' ;;
+    3) printf 'version_lookup_failed' ;;
     *) printf 'unknown' ;;
   esac
 }
@@ -500,7 +501,18 @@ fleet_app_is_scaled_to_zero() {
 
 fleet_version_from_file() {
   local fleet_file="$1"
-  awk -F': *' '$1 == "version" {print $2; exit}' "$fleet_file"
+  awk '
+    /^helm:[[:space:]]*($|#)/ { in_helm=1; next }
+    /^[^[:space:]#]/ { in_helm=0 }
+    in_helm && /^  version:[[:space:]]*/ {
+      sub(/^  version:[[:space:]]*/, "")
+      sub(/[[:space:]]+#.*/, "")
+      gsub(/^[[:space:]\042\047]+|[[:space:]\042\047]+$/, "")
+      if (length) { print; found=1 }
+      exit
+    }
+    END { if (!found) exit 1 }
+  ' "$fleet_file"
 }
 
 update_fleet_version() {
@@ -2711,6 +2723,98 @@ EOF_STUCK
   return 0
 }
 
+# One explicitly approved recovery attempt; a progress deadline alone does
+# not establish the cause. Retain evidence and never report a restart as a fix
+# until rollout and the normal ingress precheck pass.
+# Returns 0 on ready, 1 on skipped/unavailable, 2 on approved repair failure.
+maybe_repair_adguard_rollout() {
+  local app="$1" namespace="$2" evidence_dir deployment before_identity live_identity summary
+  local schema_repair=0 repair_fleet_file repair_version
+  local kc=(--kubeconfig "$kubeconfig_path" --request-timeout=15s)
+  [ "$app" = adguard-home ] && [ "$namespace" = apps-adguard-home ] || return 1
+  [ "$dry_run" -eq 0 ] || return 1
+  command -v dialog >/dev/null 2>&1 && [ -t 0 ] && [ -t 1 ] || return 1
+  evidence_dir="$(mktemp -d "$log_dir/adguard-rollout-XXXXXX")" || return 1
+  chmod 700 "$evidence_dir"
+  if ! timeout 20s kubectl "${kc[@]}" -n "$namespace" get deployment "$app" -o json \
+      >"$evidence_dir/deployment.json" 2>"$evidence_dir/deployment.stderr"; then
+    log "$app: rollout recovery diagnosis failed; evidence=$evidence_dir"
+    return 1
+  fi
+  deployment="$(cat "$evidence_dir/deployment.json")"
+  # Do not restart a paused or intentionally stopped application.
+  before_identity="$(printf '%s' "$deployment" | jq -er '
+    select(.spec.replicas > 0 and .spec.paused != true) |
+    [.metadata.uid, .metadata.generation] | @json')" || return 1
+  timeout 20s kubectl "${kc[@]}" -n "$namespace" get pods \
+    -l "app.kubernetes.io/instance=$app" -o wide \
+    >"$evidence_dir/pods.txt" 2>"$evidence_dir/pods.stderr" || true
+  timeout 20s kubectl "${kc[@]}" -n "$namespace" get events \
+    --field-selector type=Warning --sort-by=.lastTimestamp \
+    >"$evidence_dir/warnings.txt" 2>"$evidence_dir/warnings.stderr" || true
+  summary="$(tail -c 1400 "$evidence_dir/pods.txt")"
+  log "$app: rollout recovery evidence saved to $evidence_dir"
+  timeout 20s kubectl "${kc[@]}" -n "$namespace" logs "deployment/$app" \
+    -c "$app" --previous --tail=100 \
+    >"$evidence_dir/previous.log" 2>"$evidence_dir/previous.stderr" || true
+  if grep -Fq 'unknown current schema version' "$evidence_dir/previous.log"; then
+    # This known downgrade cannot be repaired by restarting the same image.
+    repair_fleet_file="$(fleet_file_for_app "$app" 2>>"$log_file")" || return 1
+    repair_version="$(fleet_version_from_file "$repair_fleet_file")"
+    if [ "$repair_version" != 16.0.0 ] || \
+        ! grep -Fq 'unknown current schema version 35' "$evidence_dir/previous.log" || \
+        ! printf '%s' "$deployment" | jq -e '.spec.template.spec.containers[] |
+          select(.name == "adguard-home") | .image |
+          startswith("docker.io/adguard/adguardhome:v0.107.80@")' >/dev/null || \
+        grep -Eq '^image:' "$(dirname "$repair_fleet_file")/values.yaml"; then
+      log "$app: unsupported schema mismatch; refusing an ineffective restart; evidence=$evidence_dir"
+      return 1
+    fi
+    if ! dialog --clear --begin 2 10 --defaultno \
+        --title "Repair AdGuard schema mismatch?" \
+        --yes-label "Apply Fleet repair" --no-label "Skip repair" \
+        --yesno "AdGuard v0.107.80 cannot read configuration schema 35. Restarting it will fail again.\n\nApply this app's configured Fleet chart 16.0.0, which supplies AdGuard v1.0.0 with schema 35 support, then validate rollout and ingress? This applies the complete configured chart and values. DNS may be interrupted during recovery. The configuration schema will not be manually changed.\n\nEvidence: $evidence_dir\n\nPerform this repair? (--yes does not approve it automatically.)" 22 114; then
+      log "$app: user declined schema compatibility repair"
+      return 1
+    fi
+    schema_repair=1
+    log "$app: user approved Fleet chart 16.0.0 schema compatibility repair"
+  elif ! dialog --clear --begin 2 10 --defaultno \
+      --title "Restart stalled AdGuard rollout?" \
+      --yes-label "Restart AdGuard" --no-label "Skip repair" \
+      --yesno "AdGuard's rollout precheck failed. The underlying cause is not yet established; a restart may not resolve it.\n\n$summary\n\nProposed recovery: restart only Deployment $namespace/$app once, then wait for rollout and run the normal ingress checks before continuing. DNS service may be interrupted. Replica counts, node placement and PVC definitions are preserved.\n\nDiagnostics (review warnings.txt): $evidence_dir\n\nPerform this restart? (--yes does not approve it automatically.)" 25 114; then
+    log "$app: user declined rollout restart; evidence=$evidence_dir"
+    return 1
+  fi
+  log "$app: approved rollout recovery; schema_repair=$schema_repair; evidence=$evidence_dir"
+  live_identity="$(timeout 20s kubectl "${kc[@]}" -n "$namespace" get deployment "$app" -o json \
+    2>>"$log_file" | jq -er 'select(.spec.replicas > 0 and .spec.paused != true) |
+    [.metadata.uid, .metadata.generation] | @json')" || live_identity=""
+  if [ "$live_identity" != "$before_identity" ]; then
+    record_failure_and_maybe_abort "AdGuard restart cancelled" \
+      "Deployment changed while approval was pending. No restart requested. Review $evidence_dir and retry."
+    return 2
+  fi
+  if [ "$schema_repair" -eq 1 ]; then
+    if ! apply_fleet_bundle "$app" "$(dirname "$repair_fleet_file")" "$namespace" "$repair_version" || \
+        ! check_rollout_ready "$app" "$namespace" "schema repair"; then
+      record_failure_and_maybe_abort "AdGuard schema repair failed" \
+        "Fleet repair failed or rollout is still not ready. Inspect $evidence_dir and $log_file."
+      return 2
+    fi
+    log "$app: Fleet schema repair rollout ready; proceeding to ingress precheck"
+    return 0
+  fi
+  if ! timeout 25s kubectl "${kc[@]}" -n "$namespace" rollout restart "deployment/$app" \
+      >>"$log_file" 2>&1 || ! check_rollout_ready "$app" "$namespace" "approved restart"; then
+    record_failure_and_maybe_abort "AdGuard rollout recovery failed" \
+      "The approved restart failed or the Deployment is still not ready. No upgrade was attempted. Review $evidence_dir and $log_file."
+    return 2
+  fi
+  log "$app: rollout ready after approved restart; proceeding to ingress precheck"
+  return 0
+}
+
 run_prechecks() {
   local app="$1"
   local namespace="$2"
@@ -2723,8 +2827,14 @@ run_prechecks() {
     elif [ "$mount_repair_status" -eq 2 ]; then
       return 1
     else
-      record_failure_and_maybe_abort "Precheck rollout failed ($app)" "Workload rollout status failed in namespace $namespace."
-      return 1
+      local rollout_repair_status=0
+      maybe_repair_adguard_rollout "$app" "$namespace" || rollout_repair_status=$?
+      if [ "$rollout_repair_status" -eq 2 ]; then
+        return 1
+      elif [ "$rollout_repair_status" -ne 0 ]; then
+        record_failure_and_maybe_abort "Precheck rollout failed ($app)" "Workload rollout status failed in namespace $namespace. See $log_file for rollout errors and any collected diagnostics."
+        return 1
+      fi
     fi
   fi
 
@@ -2993,8 +3103,9 @@ for app in $apps; do
   fi
 
   log "$app: checking if update is available" "$(color_blue "$app"): checking if update is available"
-  "$is_up_to_date_helper" "$app" --do-not-update-helm >>"$log_file" 2>&1
+  update_check_output="$("$is_up_to_date_helper" "$app" --do-not-update-helm 2>&1)"
   update_check_return_code=$?
+  printf '%s\n' "$update_check_output" >>"$log_file"
   helper_status="$(helper_status_label "$update_check_return_code")"
 
   repair_failed_release=0
@@ -3021,7 +3132,7 @@ for app in $apps; do
       version_check_error_apps+=("$app")
     fi
     log "$app: unexpected helper status: $helper_status (return_code: $update_check_return_code)" "$(color_blue "$app"): unexpected helper status: $(color_helper_status "$update_check_return_code") (return_code: $(color_helper_code "$update_check_return_code"))"
-    record_failure_and_maybe_abort "Update check failed ($app)" "is-helm-image-up-to-date.sh returned unexpected return_code $update_check_return_code."
+    record_failure_and_maybe_abort "Update check failed ($app)" "Chart version check failed (status: $helper_status, return_code: $update_check_return_code).\n\n${update_check_output:0:2200}\n\nFull output: $log_file"
     current_app=""
     continue
   fi

@@ -74,11 +74,13 @@ workload:
             AUTHELIA_SESSION_REDIS_DATABASE_INDEX: null
             AUTHELIA_SESSION_REDIS_PASSWORD: null
 
-cnpg:
-  main:
+dependencies:
+  postgresql:
+    # Chart 35 uses dependency switches instead of cnpg.main/redis.
+    # Keep the existing SQLite database and in-memory sessions.
     enabled: false
-redis:
-  enabled: false
+  valkey:
+    enabled: false
 
 persistence:
   config:
