@@ -72,5 +72,5 @@ ingress:
 # One active owner for downloads/logs or the embedded Ubooquity database.
 workload:
   main:
-    replicas: 1
+    replicas: 0
     strategy: Recreate
