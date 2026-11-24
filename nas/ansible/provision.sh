@@ -99,6 +99,7 @@ ansible-playbook -i inventory/ovh.yml codex-config_playbook.yml
 ansible-playbook -i inventory/ovh.yml claude-install_playbook.yml
 ansible-playbook -i inventory/ovh.yml claude-upgrade_playbook.yml
 ansible-playbook -i inventory/ovh.yml sup-dotfiles_playbook.yml
+ansible-playbook -i inventory/ovh.yml ovh-hestia-backup-space_playbook.yml
 
 export ANSIBLE_BECOME_PASSWORD_FILE=$proxmox_become_password_file
 

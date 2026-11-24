@@ -69,17 +69,24 @@ for (( page=1; page<=$docker_hub_pages_count; page++ )); do
     done
 done
 
-#echo "dockerhub:        "$image_name:$newest_version_current
-#echo "localhost:        "$(docker ps --format '{{.Image}}' | grep $image_name)
+running_containers=$(docker ps --format '{{.Names}}\t{{.Image}}') || exit 1
+found_image=false
+outdated_containers=()
 
-running_images=$(docker ps --format '{{.Image}}' | grep -E "(^|/)${image_name}:" || true)
+while IFS=$'\t' read -r container running_image; do
+    case "$running_image" in
+        "$image_name":*|*/"$image_name":*) ;;
+        *) continue ;;
+    esac
 
-# The host can run multiple deployments of the same image. Report up to date
-# only when every matching running container uses the newest tag.
-if [ -n "$running_images" ] && ! echo "$running_images" | grep -vFx "$image_name:$newest_version_current" > /dev/null; then
-        echo true;
+    found_image=true
+    if [[ "$running_image" != "$image_name:$newest_version_current" ]]; then
+        outdated_containers+=("$container=$running_image")
+    fi
+done <<< "$running_containers"
+
+if $found_image && (( ${#outdated_containers[@]} == 0 )); then
+    echo true
 else
-        old_running_images=$(echo "$running_images" | grep -vFx "$image_name:$newest_version_current" || true)
-        echo "false,$old_running_images,$newest_version_current" | tr '\n' ' '
-        echo
+    printf 'false,%s,%s\n' "${outdated_containers[*]}" "$newest_version_current"
 fi

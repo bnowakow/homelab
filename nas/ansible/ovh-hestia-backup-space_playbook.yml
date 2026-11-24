@@ -1,0 +1,37 @@
+---
+- name: Schedule the Hestia backup space check on OVH
+  hosts: ovh.bnowakowski.pl
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install the Hestia backup space check
+      ansible.builtin.copy:
+        src: /home/sup/code/homelab/ovh/cron/hestia-backup-space.sh
+        dest: /usr/local/sbin/hestia-backup-space
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Read root's existing crontab
+      ansible.builtin.command: crontab -u root -l
+      environment:
+        LC_ALL: C
+      register: root_crontab
+      changed_when: false
+      check_mode: false
+      failed_when: >
+        root_crontab.rc != 0 and
+        not (root_crontab.rc == 1 and root_crontab.stderr | trim == 'no crontab for root')
+
+    - name: Schedule the space check at 04:55 if absent
+      ansible.builtin.cron:
+        name: Check disk space before Hestia backups
+        user: root
+        minute: '55'
+        hour: '4'
+        job: /usr/local/sbin/hestia-backup-space
+      when: not (root_crontab.stdout is search(existing_space_check))
+      vars:
+        existing_space_check: '(?m)^[ \t]*(?:@\S+|(?:[^#\s]+[ \t]+){4}[^#\s]+)[ \t]+/usr/local/sbin/hestia-backup-space(?:[ \t]*(?:[012]?>|$))'

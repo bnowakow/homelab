@@ -58,7 +58,7 @@ latest_tag() {
   }
   log "checker output image=$image result=$(printf '%q' "$result")"
   if [[ "$result" != true ]]; then
-    # The checker format is false,<old-running-images>,<newest-tag>.
+    # The checker format is false,<outdated-containers>,<newest-tag>.
     newest=$(printf '%s\n' "$result" | awk -F, '{ value=$NF; gsub(/[[:space:]]/, "", value); print value }')
     if [[ "$newest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
       if docker manifest inspect "${image}:${newest}" >/dev/null 2>>"$LOG_FILE"; then
