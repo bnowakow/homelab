@@ -6,7 +6,9 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/bookstack
-  version: 24.0.0
+  # Recovery: chart 24 replaces the database backend and ignores mariadb values.
+  # Keep the original Longhorn database and compatible image/layout.
+  version: 23.2.3
   releaseName: bookstack
   waitForJobs: true
   valuesFiles:

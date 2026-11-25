@@ -63,6 +63,8 @@ nc=""
 
 # Intentional exclusions; plain-resource Fleet bundles are detected separately.
 exclude_patterns=(
+  # Recovery hold: chart 24 replaces BookStack's original database backend.
+  '^bookstack$'
   '^cattle-'
   '^kube-system$'
   '^cert-manager$'

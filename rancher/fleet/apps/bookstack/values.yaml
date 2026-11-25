@@ -1,5 +1,24 @@
 # Live container configuration was preserved and migrated to Longhorn.
 # Claims are managed by the separate storage bundle.
+# Retain the replacement database claim during recovery, without mounting it.
+# Keep this object until the recovered database and any newer writes are checked.
+extraTpl:
+  - apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: bookstack-mariadb-data
+      namespace: apps-bookstack
+      annotations:
+        helm.sh/resource-policy: keep
+    spec:
+      accessModes:
+        - ReadWriteOnce
+      storageClassName: local-path
+      volumeName: pvc-d0b3aaa0-725a-477c-947c-131b5637090d
+      resources:
+        requests:
+          storage: 100Gi
+
 persistence:
   config:
     enabled: true
@@ -34,6 +53,9 @@ workload:
                 expandObjectName: false
                 key: APP_KEY
             APP_URL: https://bookstack.rancher.tailscale.bnowakowski.pl/
+            # The shared credentials Secret may retain chart 24's service name.
+            # Connect explicitly to the recovered original database backend.
+            DB_HOST: bookstack-mariadb
 
 ingress:
   main:
