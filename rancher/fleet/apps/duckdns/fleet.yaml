@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/duckdns
-  version: 15.0.0
+  version: 15.0.1
   releaseName: duckdns
   waitForJobs: true
   valuesFiles:
