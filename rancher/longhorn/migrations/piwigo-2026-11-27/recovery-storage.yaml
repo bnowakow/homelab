@@ -1,0 +1,42 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: piwigo-recovery-crypto-temporary
+  annotations:
+    recovery.homelab/replica-exception: temporary-single-replica-authorized-2026-11-27
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "1"
+  staleReplicaTimeout: "30"
+  fsType: ext4
+  dataEngine: v1
+  dataLocality: disabled
+  encrypted: "true"
+  csi.storage.k8s.io/provisioner-secret-name: longhorn-crypto
+  csi.storage.k8s.io/provisioner-secret-namespace: longhorn-system
+  csi.storage.k8s.io/node-publish-secret-name: longhorn-crypto
+  csi.storage.k8s.io/node-publish-secret-namespace: longhorn-system
+  csi.storage.k8s.io/node-stage-secret-name: longhorn-crypto
+  csi.storage.k8s.io/node-stage-secret-namespace: longhorn-system
+  csi.storage.k8s.io/node-expand-secret-name: longhorn-crypto
+  csi.storage.k8s.io/node-expand-secret-namespace: longhorn-system
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: piwigo-mariadb-recovered-longhorn-crypto
+  namespace: apps-piwigo
+  annotations:
+    helm.sh/resource-policy: keep
+    recovery.homelab/replica-exception: temporary-single-replica-authorized-2026-11-27
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: piwigo-recovery-crypto-temporary
+  resources:
+    requests:
+      storage: 2Gi

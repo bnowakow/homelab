@@ -1,0 +1,13 @@
+{
+  "approvedUTC": "2026-11-27T12:28:07Z",
+  "replicaOverrides": [
+    {
+      "namespace": "apps-ubooquity",
+      "name": "ubooquity",
+      "uid": "c85b3132-d671-4539-af15-3db33b65eb02",
+      "savedReplicas": 1,
+      "replicas": 0,
+      "reason": "User explicitly approved keeping the declared Fleet count at zero: '0 is good'."
+    }
+  ]
+}

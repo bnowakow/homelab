@@ -4,7 +4,9 @@ dependsOn:
 - name: piwigo-storage
 helm:
   chart: oci://oci.trueforge.org/truecharts/piwigo
-  version: 23.0.0
+  # Recovery: 23.0.0 replaced MariaDB 13.1.1 with an empty 11.8.6 instance.
+  # Keep the known original image/layout until a logical migration is validated.
+  version: 22.3.2
   releaseName: piwigo
   waitForJobs: true
   valuesFiles:

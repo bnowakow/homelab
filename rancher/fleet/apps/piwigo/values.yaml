@@ -55,6 +55,17 @@ configmap:
           { echo "<?php $line ?>"; cat "$f"; } > "$f.new" && cat "$f.new" > "$f" && rm "$f.new"
         fi
         echo "[require-login] $(grep "^\$conf\['guest_access'\]" "$f")"
+      95-recovery-database-host.sh: |
+        #!/bin/bash
+        set -euo pipefail
+        # The recovery chart uses the original MariaDB Service name again.
+        f=/config/www/local/config/database.inc.php
+        test -f "$f"
+        if grep -q 'piwigo-mariadb-main' "$f"; then
+          cp -p "$f" "$f.before-recovery-host"
+          sed -i 's/piwigo-mariadb-main/piwigo-mariadb/g' "$f"
+        fi
+        echo '[recovery] Database Service: piwigo-mariadb'
 
 mariadb:
   workload:
@@ -65,7 +76,9 @@ mariadb:
     data:
       enabled: true
       type: pvc
-      existingClaim: piwigo-mariadb-data-longhorn-crypto
+      # Verified encrypted recovery copy; original claim is preserved for rollback.
+      # Temporarily one replica, explicitly authorized on 2026-11-27.
+      existingClaim: piwigo-original-copy-longhorn-crypto
 
 workload:
   main:
