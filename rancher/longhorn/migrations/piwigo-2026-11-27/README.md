@@ -1,6 +1,39 @@
 # Piwigo recovery, 27 November 2026
 
-## Current status
+## Current state — 27 November 2026, 16:26 UTC
+
+Piwigo recovery and cluster restoration are complete. Published commit
+`a2f97a2a86c5711175a9ce0cb0327d098a05b67d` was verified against the live
+GitRepo, and Fleet reconciliation resumed. Final read-only verification
+completed at 16:11:44 UTC: saved application replica counts, saved zero counts,
+controls, schedules and Fleet pause states matched; Piwigo returned local and
+ingress HTTP 200 with 44 images, 2 categories, 2 users and guest access
+disabled. Ubooquity remains at the explicitly approved zero replicas.
+
+The recovered database volume is encrypted, healthy, attached on proxmox3 and
+currently has one replica. `proxmox2-old` remains excluded. The original source
+PVC, superseded empty local-path PVC and unused recovery target PVC remain
+bound and retained.
+
+A fresh manual Longhorn backup completed: snapshot
+`piwigo-manual-20261127` was ready at 16:26:07 UTC, and Backup CR
+`piwigo-manual-20261127` reached `Completed` with `lastSyncedAt` 16:26:38 UTC.
+The snapshot size was 318,767,104 bytes. This proves a backup was uploaded;
+no restore test of this new backup has been performed yet.
+
+Remaining unrelated Fleet health findings from the final verification:
+BookStack's BundleDeployment reports an immutable-field mismatch for its
+already-bound `bookstack-mariadb-data` PVC, although its application and
+database pods were Ready in the latest workload readback. Longhorn reports its
+manager DaemonSet progressing at 1/2 updated while proxmox2-old remains
+excluded. The `longhorn-backups` BundleDeployment is Ready. Do not delete or
+rewrite BookStack's bound claim, or unexclude proxmox2-old, as part of Piwigo
+recovery.
+
+### Historical workflow and validation details
+
+The following entries preserve the state and decisions at each intermediate
+stage; the current cluster state is summarized above.
 
 Independent host readback after the local-only apply confirms both Bundle and
 BundleDeployment at chart 22.3.2, both paused, with the corrected deployment ID
@@ -248,12 +281,22 @@ mounted read-only without journal replay, copied and checksum-verified, then
 detached before the recovered copy became production. The original volume
 configuration/replica count and data remain preserved.
 
-Newest listed completed backup: `backup-5ef9df32921046e2`, 24 November 2026
-00:20:42 UTC. Backup contents have not been verified. Preserve both existing
-claims and the backup. Do not run the gallery installer or open the original
-data directory with the new database image.
+At diagnosis, the newest listed completed source-volume backup was
+`backup-5ef9df32921046e2`, 24 November 2026 00:20:42 UTC; its contents were
+not independently verified. Preserve the original source claim and backup.
+Do not run the gallery installer or open the original data directory with the
+replacement database image.
 
-## Current authorization and health gate
+After cutover, the recovered production volume
+`pvc-1cc19dc9-a296-4db7-a588-2e2ccb1bd4ad` was enrolled in the daily
+`nas-backup` group (`0 1 * * *`). The first scheduled run had already passed
+when the volume was created. The user then requested an early backup and
+created Longhorn Snapshot CR `piwigo-manual-20261127`; it became ready at
+16:26:07 UTC. Longhorn Backup CR with the same name, using incremental mode,
+reached `Completed` at 16:26:38 UTC, snapshot size 318,767,104 bytes. A restore
+test of this newly completed backup remains outstanding.
+
+## Authorization and remaining storage follow-up
 
 User instruction: do not use proxmox2-old for now. Preserve its cordon,
 storage-repair taint, and disabled Longhorn node/disk scheduling.
@@ -264,8 +307,9 @@ authorized temporarily changing the two-replica requirement for this recovery
 Longhorn default change or permission to use proxmox2-old. Recovery volumes
 may temporarily use one healthy replica. Preserve the original source
 volume's configuration and data. This exception did not waive cluster-wide
-application shutdown: shutdown was verified before copying. The copy and
-Piwigo cutover are now complete; unrelated restoration is in progress.
+application shutdown: shutdown was verified before copying. The copy, Piwigo
+cutover and gradual application restoration are complete. Returning to two
+replicas remains pending an additional eligible healthy storage node.
 
 `recovery-storage.yaml` defines a separate encrypted, Retain StorageClass
 with one replica and a new empty 2Gi target claim. It does not modify the
