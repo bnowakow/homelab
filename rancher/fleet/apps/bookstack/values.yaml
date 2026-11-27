@@ -53,9 +53,18 @@ workload:
                 expandObjectName: false
                 key: APP_KEY
             APP_URL: https://bookstack.rancher.tailscale.bnowakowski.pl/
-            # The shared credentials Secret may retain chart 24's service name.
-            # Connect explicitly to the recovered original database backend.
-            DB_HOST: bookstack-mariadb
+            # Keep the deployed Secret references to avoid Helm retaining a
+            # stale valueFrom when patching these environment variables.
+            DB_HOST:
+              secretKeyRef:
+                name: bookstack-mariadbcreds
+                expandObjectName: false
+                key: plainhost
+            DB_PASSWORD:
+              secretKeyRef:
+                name: bookstack-mariadbcreds
+                expandObjectName: false
+                key: mariadb-password
 
 ingress:
   main:
