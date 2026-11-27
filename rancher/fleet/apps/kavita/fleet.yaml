@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/kavita
-  version: 15.0.0
+  version: 15.0.1
   releaseName: kavita
   waitForJobs: true
   valuesFiles:

@@ -6,7 +6,7 @@ dependsOn:
 
 helm:
   chart: oci://oci.trueforge.org/truecharts/smokeping
-  version: 16.0.0
+  version: 16.0.1
   releaseName: smokeping
   waitForJobs: true
   valuesFiles:
