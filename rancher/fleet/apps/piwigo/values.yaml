@@ -58,14 +58,14 @@ configmap:
       95-recovery-database-host.sh: |
         #!/bin/bash
         set -euo pipefail
-        # The recovery chart uses the original MariaDB Service name again.
+        # The deployed chart exposes the recovered database at this Service.
         f=/config/www/local/config/database.inc.php
         test -f "$f"
-        if grep -q 'piwigo-mariadb-main' "$f"; then
+        if grep -Eq "\$conf\['db_host'\].*'piwigo-mariadb(:3306)?'" "$f"; then
           cp -p "$f" "$f.before-recovery-host"
-          sed -i 's/piwigo-mariadb-main/piwigo-mariadb/g' "$f"
+          sed -i "s/'piwigo-mariadb\\(:3306\\)\\?'/'piwigo-mariadb-main\\1'/" "$f"
         fi
-        echo '[recovery] Database Service: piwigo-mariadb'
+        echo '[recovery] Database Service: piwigo-mariadb-main'
 
 mariadb:
   workload:
