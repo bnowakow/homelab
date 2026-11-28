@@ -525,11 +525,13 @@ only the Command Line Tools are in use.
 
 `dev-tools_playbook.yml`, which runs right after `make-dependencies_playbook.yml`
 (below), installs with Homebrew, when missing: SDKMAN (`sdkman/tap/sdkman-cli`),
-screen, wget, curl, gnu-sed (installed as `gsed`; the BSD `sed` in `/usr/bin` is untouched), git (Homebrew's, which `.zshrc` puts ahead of Apple's `/usr/bin/git`), ffmpeg, ggshield, mole, mtr, node, ollama, pipx, pyenv,
+screen, wget, curl, gnu-sed (installed as `gsed`; the BSD `sed` in `/usr/bin` is untouched), git (Homebrew's, which `.zshrc` puts ahead of Apple's `/usr/bin/git`), ffmpeg, ggshield, macmon (Apple Silicon only), mole, mtr, node, ollama, pipx, pyenv,
 pyenv-virtualenv, the current `python`, readline, ruby, sshpass, tree, yt-dlp, ansible, dialog and the
-casks rar and znotch (`zkondor/dist/znotch`). Homebrew 7 refuses untrusted taps,
-so only the SDKMAN formula and the znotch cask are trusted, with
-`brew trust`. Taps, trusted items, formulae and casks are recorded in
+casks rar, znotch (`zkondor/dist/znotch`), and Wine Stable
+(`gcenx/wine/wine-stable`). An existing `wine` on `PATH` is reused. The
+Wine build requires Rosetta 2 on Apple Silicon. Homebrew 7 refuses untrusted
+taps, so provisioning uses `brew trust` for the named SDKMAN, znotch, and
+Wine packages. Taps, trusted items, formulae and casks are recorded in
 `~/.homelab-provision-state/dev-tools-{taps,trusted,formulae,casks}` before
 installing; `undo-provision.sh` removes them, untrusts and untaps.
 

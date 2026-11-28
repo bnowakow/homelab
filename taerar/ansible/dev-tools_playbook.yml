@@ -8,8 +8,8 @@
     - name: Make sure the Xcode license does not block git and Homebrew
       ansible.builtin.include_tasks: tasks/xcode-license.yml
 
-    # SDKMAN (sdkman/tap) and the znotch cask (zkondor/dist) come from third-party
-    # taps; Homebrew 7 refuses untrusted taps, so only those named items are
+    # SDKMAN, znotch, and Wine come from third-party taps. Homebrew 7
+    # refuses untrusted taps, so only those named items are
     # trusted. Taps, trusted items, formulae and casks are recorded before
     # installing so undo-provision.sh can remove exactly what provisioning added.
     - name: Install missing developer tools and record rollback manifests
@@ -29,6 +29,7 @@
           'gnu-sed|gnu-sed||formula'
           'ffmpeg|ffmpeg||formula'
           'ggshield|ggshield||formula'
+          'macmon|macmon||formula'
           'mole|mole||formula'
           'mtr|mtr||formula'
           'node|node||formula'
@@ -46,10 +47,14 @@
           'dialog|dialog||formula'
           'rar|rar||cask'
           'znotch|zkondor/dist/znotch|zkondor/dist|cask'
+          'wine-stable|gcenx/wine/wine-stable|gcenx/wine|cask'
         )
+        architecture=$(uname -m)
         wanted_formulae=(); wanted_casks=(); install_formulae=(); install_casks=()
         for item in "${items[@]}"; do
           IFS='|' read -r name install tap kind <<< "$item"
+          if [[ "$name" == macmon && "$architecture" != arm64 ]]; then continue; fi
+          if [[ "$name" == wine-stable ]] && command -v wine >/dev/null 2>&1; then continue; fi
           if brew list "--$kind" "$name" >/dev/null 2>&1; then continue; fi
           if [[ -n "$tap" ]]; then
             if ! brew tap | grep -qx "$tap"; then
